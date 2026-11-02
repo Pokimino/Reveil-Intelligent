@@ -1,0 +1,13 @@
+# Compilations STM32CubeIDE
+**/Debug/
+**/Release/
+
+# Fichiers temporaires Eclipse
+**/.metadata/
+
+# Fichiers macOS
+.DS_Store
+**/.DS_Store
+
+# Fichiers temporaires
+*.log
