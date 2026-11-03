@@ -32,25 +32,47 @@
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
 
+typedef enum
+{
+    APP_CMD_SNOOZE = 0,
+    APP_CMD_STOP,
+    APP_CMD_REARM,
+    APP_CMD_SET_TIME,
+    APP_CMD_SET_ALARM,
+    APP_CMD_SET_ENABLED
+
+} AppCommandType_t;
+
 typedef struct
 {
+    AppCommandType_t type;
+
     uint8_t hours;
     uint8_t minutes;
     uint8_t seconds;
     uint8_t enabled;
 
+} AppCommand_t;
+
+/* Message transmis a la tache OLED */
+
+typedef struct
+{
+    /* Heure actuelle du RTC */
+    uint8_t hours;
+    uint8_t minutes;
+    uint8_t seconds;
+
+    /* Heure de l'alarme */
+    uint8_t alarmHours;
+    uint8_t alarmMinutes;
+
+    /* Etat de l'alarme */
+    uint8_t enabled;
     AppAlarm_State_t state;
 
 } DisplayMessage_t;
 
-
-typedef enum
-{
-    APP_CMD_SNOOZE = 0,
-    APP_CMD_STOP,
-    APP_CMD_REARM
-
-} AppCommand_t;
 
 
 /* USER CODE END PTD */
@@ -116,6 +138,24 @@ void StartCommandTask(void *argument);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+static uint8_t App_Parse2Digits(
+    const char *text,
+    uint8_t *value)
+{
+    if (text[0] < '0' || text[0] > '9' ||
+        text[1] < '0' || text[1] > '9')
+    {
+        return 0;
+    }
+
+    *value = (uint8_t)(
+        (text[0] - '0') * 10 +
+        (text[1] - '0')
+    );
+
+    return 1;
+}
 
 /* USER CODE END 0 */
 
@@ -472,6 +512,8 @@ void StartDefaultTask(void *argument)
 
     uint8_t lastSecond = 255;
     uint8_t lastEnabled = 255;
+    uint8_t lastAlarmHour = 255;
+    uint8_t lastAlarmMinute = 255;
 
     AppAlarm_State_t lastState =
         (AppAlarm_State_t)255;
@@ -528,7 +570,7 @@ void StartDefaultTask(void *argument)
                        NULL,
                        0) == osOK)
             {
-                switch (cmd)
+                switch (cmd.type)
                 {
                     case APP_CMD_SNOOZE:
 
@@ -569,15 +611,99 @@ void StartDefaultTask(void *argument)
 
                         break;
 
+                    case APP_CMD_SET_TIME:
+
+                        if (AppClock_SetTime(
+                                &hrtc,
+                                cmd.hours,
+                                cmd.minutes,
+                                cmd.seconds) == HAL_OK)
+                        {
+                            /* Relire immediatement la nouvelle heure */
+                            if (AppClock_Read(
+                                    &hrtc, &currentTime) == HAL_OK)
+                            {
+                                /* Forcer le prochain affichage */
+                                lastSecond = 255;
+                            }
+                        }
+
+                        break;
+
+                    case APP_CMD_SET_ALARM:
+                    {
+                        /* Conserver l'etat d'activation */
+                        uint8_t wasEnabled = alarm.enabled;
+
+                        /* Configurer la nouvelle heure */
+                        AppAlarm_Init(
+                            &alarm,
+                            cmd.hours,
+                            cmd.minutes,
+                            10
+                        );
+
+                        /* Eviter un declenchement immediat
+                           si on programme la minute actuelle */
+                        if (currentTime.hours == alarm.hours &&
+                            currentTime.minutes == alarm.minutes)
+                        {
+                            alarm.minuteArmed = 0;
+                        }
+
+                        /* Respecter une alarme deja desactivee */
+                        if (!wasEnabled)
+                        {
+                            AppAlarm_Stop(&alarm);
+                        }
+
+                        break;
+                    }
+
+                    case APP_CMD_SET_ENABLED:
+                    {
+                        if (cmd.enabled == 0)
+                        {
+                            /* Desactiver et arreter l'alarme */
+                            AppAlarm_Stop(&alarm);
+                        }
+                        else
+                        {
+                            /* Reactiver avec l'heure programmee */
+                            AppAlarm_Init(
+                                &alarm,
+                                alarm.hours,
+                                alarm.minutes,
+                                10
+                            );
+
+                            /* Ne pas declencher immediatement
+                               pendant la minute en cours */
+                            if (currentTime.hours == alarm.hours &&
+                                currentTime.minutes == alarm.minutes)
+                            {
+                                alarm.minuteArmed = 0;
+                            }
+                        }
+
+                        break;
+                    }
+
+
+
                     default:
                         break;
                 }
             }
 
             /* Envoyer l'etat a la tache OLED */
+
             if (currentTime.seconds != lastSecond ||
                 alarm.state != lastState ||
-                alarm.enabled != lastEnabled)
+                alarm.enabled != lastEnabled ||
+                alarm.hours != lastAlarmHour ||
+                alarm.minutes != lastAlarmMinute)
+
             {
                 DisplayMessage_t msg;
 
@@ -586,6 +712,8 @@ void StartDefaultTask(void *argument)
                 msg.seconds = currentTime.seconds;
                 msg.state = alarm.state;
                 msg.enabled = alarm.enabled;
+                msg.alarmHours = alarm.hours;
+                msg.alarmMinutes = alarm.minutes;
 
                 /* Communication sans attente */
                 if (osMessageQueuePut(
@@ -614,6 +742,8 @@ void StartDefaultTask(void *argument)
                 lastSecond = currentTime.seconds;
                 lastState = alarm.state;
                 lastEnabled = alarm.enabled;
+                lastAlarmHour = alarm.hours;
+                lastAlarmMinute = alarm.minutes;
             }
         }
 
@@ -649,13 +779,15 @@ void StartDisplayTask(void *argument)
 	              NULL,
 	              osWaitForever) == osOK)
 	      {
-	          OLED_ShowAlarm(
-	              msg.hours,
-	              msg.minutes,
-	              msg.seconds,
-	              msg.state,
-	              msg.enabled
-	          );
+	    	  OLED_ShowAlarm(
+	    	      msg.hours,
+	    	      msg.minutes,
+	    	      msg.seconds,
+	    	      msg.alarmHours,
+	    	      msg.alarmMinutes,
+	    	      msg.state,
+	    	      msg.enabled
+	    	  );
 	      }
   }
   /* USER CODE END StartDisplayTask */
@@ -673,13 +805,21 @@ void StartCommandTask(void *argument)
   /* USER CODE BEGIN StartCommandTask */
   /* Infinite loop */
 
+
 	uint8_t rx;
+
+	char line[16];
+	uint8_t len = 0;
 
 	const char welcome[] =
 	    "\r\nREVEIL INTELLIGENT\r\n"
+	    "T HH MM SS = regler heure\r\n"
 	    "s = SNOOZE\r\n"
 	    "x = STOP\r\n"
-	    "r = REARM\r\n";
+	    "r = REARM\r\n"
+			"A HH MM = regler alarme\r\n"
+			"E 0 / E 1 = OFF / ON\r\n"
+			;
 
 	HAL_UART_Transmit(
 	    &huart2,
@@ -690,48 +830,146 @@ void StartCommandTask(void *argument)
 
 	for (;;)
 	{
-	    /* Lecture d'un caractere sur USART2 */
 	    if (HAL_UART_Receive(
 	            &huart2,
 	            &rx,
 	            1,
 	            1) == HAL_OK)
 	    {
-	        AppCommand_t cmd;
-	        uint8_t valid = 1;
+	        AppCommand_t cmd = {0};
+	        uint8_t send = 0;
 
-	        switch (rx)
+	        /* Commandes simples immediates */
+	        if (len == 0 &&
+	            (rx == 's' || rx == 'S' ||
+	             rx == 'x' || rx == 'X' ||
+	             rx == 'r' || rx == 'R'))
 	        {
-	            case 's':
-	            case 'S':
-	                cmd = APP_CMD_SNOOZE;
-	                break;
+	            if (rx == 's' || rx == 'S')
+	                cmd.type = APP_CMD_SNOOZE;
 
-	            case 'x':
-	            case 'X':
-	                cmd = APP_CMD_STOP;
-	                break;
+	            else if (rx == 'x' || rx == 'X')
+	                cmd.type = APP_CMD_STOP;
 
-	            case 'r':
-	            case 'R':
-	                cmd = APP_CMD_REARM;
-	                break;
+	            else
+	                cmd.type = APP_CMD_REARM;
 
-	            default:
-	                valid = 0;
-	                break;
+	            send = 1;
 	        }
 
-	        if (valid)
+
+	        /* Fin d'une commande complete */
+	        else if (rx == '\r' || rx == '\n')
 	        {
-	            /* Envoyer l'ordre a la tache alarme */
+	            if (len > 0)
+	            {
+	                uint8_t h = 0;
+	                uint8_t m = 0;
+	                uint8_t s = 0;
+
+	                /* T HH MM SS : regler le RTC */
+	                if (len == 10 &&
+	                    (line[0] == 'T' || line[0] == 't') &&
+	                    line[1] == ' ' &&
+	                    line[4] == ' ' &&
+	                    line[7] == ' ' &&
+	                    App_Parse2Digits(&line[2], &h) &&
+	                    App_Parse2Digits(&line[5], &m) &&
+	                    App_Parse2Digits(&line[8], &s) &&
+	                    h < 24 && m < 60 && s < 60)
+	                {
+	                    cmd.type = APP_CMD_SET_TIME;
+	                    cmd.hours = h;
+	                    cmd.minutes = m;
+	                    cmd.seconds = s;
+	                    send = 1;
+	                }
+
+	                /* A HH MM : programmer l'alarme */
+	                else if (len == 7 &&
+	                    (line[0] == 'A' || line[0] == 'a') &&
+	                    line[1] == ' ' &&
+	                    line[4] == ' ' &&
+	                    App_Parse2Digits(&line[2], &h) &&
+	                    App_Parse2Digits(&line[5], &m) &&
+	                    h < 24 && m < 60)
+	                {
+	                    cmd.type = APP_CMD_SET_ALARM;
+	                    cmd.hours = h;
+	                    cmd.minutes = m;
+	                    send = 1;
+	                }
+
+	                /* E 0 ou E 1 : activer / desactiver */
+	                else if (len == 3 &&
+	                    (line[0] == 'E' || line[0] == 'e') &&
+	                    line[1] == ' ' &&
+	                    (line[2] == '0' || line[2] == '1'))
+	                {
+	                    cmd.type = APP_CMD_SET_ENABLED;
+	                    cmd.enabled = line[2] - '0';
+	                    send = 1;
+	                }
+
+	                else
+	                {
+	                    const char error[] =
+	                        "ERREUR: commande invalide\r\n";
+
+	                    HAL_UART_Transmit(
+	                        &huart2,
+	                        (uint8_t *)error,
+	                        sizeof(error) - 1,
+	                        100
+	                    );
+	                }
+
+	                len = 0;
+	            }
+	        }
+
+
+	        /* Retour arriere */
+	        else if (rx == '\b' || rx == 127)
+	        {
+	            if (len > 0)
+	                len--;
+	        }
+
+	        /* Accumulation de la ligne */
+	        else if (rx >= 32 && rx <= 126)
+	        {
+	            if (len < sizeof(line) - 1)
+	            {
+	                line[len++] = (char)rx;
+	            }
+	            else
+	            {
+	                len = 0;
+
+	                const char error[] =
+	                    "ERREUR: ligne trop longue\r\n";
+
+	                HAL_UART_Transmit(
+	                    &huart2,
+	                    (uint8_t *)error,
+	                    sizeof(error) - 1,
+	                    100
+	                );
+	            }
+	        }
+
+	        /* Envoyer la commande */
+	        if (send)
+	        {
 	            if (osMessageQueuePut(
 	                    commandQueueHandle,
 	                    &cmd,
 	                    0,
 	                    0) == osOK)
 	            {
-	                const char ack[] = "Commande recue\r\n";
+	                const char ack[] =
+	                    "Commande envoyee\r\n";
 
 	                HAL_UART_Transmit(
 	                    &huart2,
@@ -740,11 +978,24 @@ void StartCommandTask(void *argument)
 	                    100
 	                );
 	            }
+	            else
+	            {
+	                const char error[] =
+	                    "ERREUR: queue pleine\r\n";
+
+	                HAL_UART_Transmit(
+	                    &huart2,
+	                    (uint8_t *)error,
+	                    sizeof(error) - 1,
+	                    100
+	                );
+	            }
 	        }
 	    }
 
 	    osDelay(10);
 	}
+
 
   /* USER CODE END StartCommandTask */
 }
