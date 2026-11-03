@@ -41,3 +41,54 @@ void OLED_ShowStartup(void)
 }
 
 
+void OLED_ShowTime(
+    uint8_t hours,
+    uint8_t minutes,
+    uint8_t seconds)
+{
+    char text[9];
+
+    /* Conversion de HH:MM:SS en caracteres */
+    text[0] = '0' + hours / 10;
+    text[1] = '0' + hours % 10;
+    text[2] = ':';
+    text[3] = '0' + minutes / 10;
+    text[4] = '0' + minutes % 10;
+    text[5] = ':';
+    text[6] = '0' + seconds / 10;
+    text[7] = '0' + seconds % 10;
+    text[8] = '\0';
+
+    /* Effacer l'ancien affichage */
+    SSD1306_Fill(SSD1306_COLOR_BLACK);
+
+    /* Titre */
+    SSD1306_GotoXY(0, 0);
+    SSD1306_Puts(
+        "REVEIL INTELLIGENT",
+        &Font_7x10,
+        1
+    );
+
+    /* Heure */
+    SSD1306_GotoXY(20, 22);
+    SSD1306_Puts(
+        text,
+        &Font_11x18,
+        1
+    );
+
+    /* Indication */
+    SSD1306_GotoXY(22, 48);
+    SSD1306_Puts(
+        "HORLOGE RTC",
+        &Font_7x10,
+        1
+    );
+
+    /* Mise a jour physique de l'OLED */
+    SSD1306_UpdateScreen();
+}
+
+
+

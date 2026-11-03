@@ -1,23 +1,20 @@
-/*
- * oled.h
- *
- *  Created on: Nov 2, 2026
- *      Author: youssefzaimi
- */
-
 
 #ifndef OLED_H
 #define OLED_H
 
-/*
- * Module OLED - Reveil intelligent
- * Ecran SSD1306 128x64 - I2C1
- */
+#include <stdint.h>
 
-/* Initialise l'ecran OLED */
+/* Initialisation de l'ecran OLED */
 void OLED_Init(void);
 
-/* Affiche la page de demarrage */
+/* Affichage de la page de demarrage */
 void OLED_ShowStartup(void);
+
+/* Affichage de l'heure RTC */
+void OLED_ShowTime(
+    uint8_t hours,
+    uint8_t minutes,
+    uint8_t seconds
+);
 
 #endif /* OLED_H */
