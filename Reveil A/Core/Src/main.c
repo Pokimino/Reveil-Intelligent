@@ -26,6 +26,7 @@
 #include "oled.h"
 #include "sound.h"
 #include "app_msg.h"
+#include "buttons.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -55,7 +56,7 @@ UART_HandleTypeDef huart2;
 osThreadId_t defaultTaskHandle;
 const osThreadAttr_t defaultTask_attributes = {
   .name = "defaultTask",
-  .stack_size = 128 * 4,
+  .stack_size = 1024 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
 /* USER CODE BEGIN PV */
@@ -73,7 +74,6 @@ static void MX_TIM8_Init(void);
 void StartDefaultTask(void *argument);
 
 /* USER CODE BEGIN PFP */
-static void TestSon(void *argument);   /* temporaire */
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -144,10 +144,7 @@ int main(void)
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
   Son_Init();
-
-  /* temporaire : simule la future tâche Réveil */
-  static const osThreadAttr_t test_attr = { .name = "TestSon", .stack_size = 128 * 4 };
-  osThreadNew(TestSon, NULL, &test_attr);
+  Boutons_Init();
   /* USER CODE END RTOS_THREADS */
 
   /* USER CODE BEGIN RTOS_EVENTS */
@@ -447,23 +444,25 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(LD2_GPIO_Port, &GPIO_InitStruct);
 
+  /*Configure GPIO pin : SW2_Pin */
+  GPIO_InitStruct.Pin = SW2_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  HAL_GPIO_Init(SW2_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : SW1_Pin */
+  GPIO_InitStruct.Pin = SW1_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  HAL_GPIO_Init(SW1_GPIO_Port, &GPIO_InitStruct);
+
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 
   /* USER CODE END MX_GPIO_Init_2 */
 }
 
 /* USER CODE BEGIN 4 */
-/* Tâche de test temporaire : envoie des ordres à la tâche Son */
-static void TestSon(void *argument)
-{
-  OrdreSon_t o;
-  for (;;)
-  {
-    o = MELODIE_ON;  osMessageQueuePut(Ordres_SonHandle, &o, 0, 0); osDelay(6000);
-    o = MELODIE_OFF; osMessageQueuePut(Ordres_SonHandle, &o, 0, 0); osDelay(1500);
-    o = BIP;         osMessageQueuePut(Ordres_SonHandle, &o, 0, 0); osDelay(2000);
-  }
-}
+
 /* USER CODE END 4 */
 
 /* USER CODE BEGIN Header_StartDefaultTask */
