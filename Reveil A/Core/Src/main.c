@@ -27,6 +27,7 @@
 #include "sound.h"
 #include "app_msg.h"
 #include "buttons.h"
+#include "touch.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -50,6 +51,8 @@ RTC_HandleTypeDef hrtc;
 
 TIM_HandleTypeDef htim8;
 
+TSC_HandleTypeDef htsc;
+
 UART_HandleTypeDef huart2;
 
 /* Definitions for defaultTask */
@@ -71,6 +74,7 @@ static void MX_USART2_UART_Init(void);
 static void MX_I2C1_Init(void);
 static void MX_RTC_Init(void);
 static void MX_TIM8_Init(void);
+static void MX_TSC_Init(void);
 void StartDefaultTask(void *argument);
 
 /* USER CODE BEGIN PFP */
@@ -114,6 +118,7 @@ int main(void)
   MX_I2C1_Init();
   MX_RTC_Init();
   MX_TIM8_Init();
+  MX_TSC_Init();
   /* USER CODE BEGIN 2 */
 
   /* USER CODE END 2 */
@@ -145,6 +150,7 @@ int main(void)
   /* add threads, ... */
   Son_Init();
   Boutons_Init();
+  Touches_Init();
   /* USER CODE END RTOS_THREADS */
 
   /* USER CODE BEGIN RTOS_EVENTS */
@@ -372,6 +378,49 @@ static void MX_TIM8_Init(void)
 
   /* USER CODE END TIM8_Init 2 */
   HAL_TIM_MspPostInit(&htim8);
+
+}
+
+/**
+  * @brief TSC Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TSC_Init(void)
+{
+
+  /* USER CODE BEGIN TSC_Init 0 */
+
+  /* USER CODE END TSC_Init 0 */
+
+  /* USER CODE BEGIN TSC_Init 1 */
+
+  /* USER CODE END TSC_Init 1 */
+
+  /** Configure the TSC peripheral
+  */
+  htsc.Instance = TSC;
+  htsc.Init.CTPulseHighLength = TSC_CTPH_2CYCLES;
+  htsc.Init.CTPulseLowLength = TSC_CTPL_2CYCLES;
+  htsc.Init.SpreadSpectrum = DISABLE;
+  htsc.Init.SpreadSpectrumDeviation = 1;
+  htsc.Init.SpreadSpectrumPrescaler = TSC_SS_PRESC_DIV1;
+  htsc.Init.PulseGeneratorPrescaler = TSC_PG_PRESC_DIV4;
+  htsc.Init.MaxCountValue = TSC_MCV_8191;
+  htsc.Init.IODefaultMode = TSC_IODEF_OUT_PP_LOW;
+  htsc.Init.SynchroPinPolarity = TSC_SYNC_POLARITY_FALLING;
+  htsc.Init.AcquisitionMode = TSC_ACQ_MODE_NORMAL;
+  htsc.Init.MaxCountInterrupt = DISABLE;
+  htsc.Init.ChannelIOs = TSC_GROUP1_IO1|TSC_GROUP1_IO2|TSC_GROUP1_IO3;
+  htsc.Init.ShieldIOs = 0;
+  htsc.Init.SamplingIOs = TSC_GROUP1_IO4;
+  if (HAL_TSC_Init(&htsc) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TSC_Init 2 */
+
+  /* USER CODE END TSC_Init 2 */
 
 }
 
