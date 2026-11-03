@@ -21,8 +21,12 @@
 #include "cmsis_os.h"
 
 /* Private includes ----------------------------------------------------------*/
+/* USER CODE BEGIN Includes */
+
 #include "oled.h"
 #include "app_clock.h"
+#include "app_alarm.h"
+
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -51,7 +55,7 @@ UART_HandleTypeDef huart2;
 osThreadId_t defaultTaskHandle;
 const osThreadAttr_t defaultTask_attributes = {
   .name = "defaultTask",
-  .stack_size = 128 * 4,
+  .stack_size = 1024 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
 /* USER CODE BEGIN PV */
@@ -383,49 +387,150 @@ static void MX_GPIO_Init(void)
   * @retval None
   */
 /* USER CODE END Header_StartDefaultTask */
-
 void StartDefaultTask(void *argument)
 {
-    /* USER CODE BEGIN 5 */
+  /* USER CODE BEGIN 5 */
 
     AppClock_Time_t currentTime;
+    AppAlarm_t alarm;
 
     uint8_t lastSecond = 255;
+    AppAlarm_State_t previousState;
+    AppAlarm_State_t displayedState;
 
-    /* Initialisation RTC */
+    uint32_t ringingStartTick = 0;
+    uint32_t snoozeStartTick = 0;
+    uint8_t testStage = 0;
+
+    /* Initialiser le RTC */
     if (AppClock_Init(&hrtc) != HAL_OK)
     {
         Error_Handler();
     }
 
-    /* Initialisation OLED */
+    /* Initialiser l'OLED */
     OLED_Init();
+
+    /* Lire l'heure de depart */
+    if (AppClock_Read(&hrtc, &currentTime) != HAL_OK)
+    {
+        Error_Handler();
+    }
+
+    /* Programmer l'alarme a la minute suivante */
+    uint8_t alarmHour = currentTime.hours;
+    uint8_t alarmMinute = currentTime.minutes + 1;
+
+    if (alarmMinute >= 60)
+    {
+        alarmMinute = 0;
+        alarmHour = (alarmHour + 1) % 24;
+    }
+
+    /* SNOOZE de 10 secondes pour le test */
+    AppAlarm_Init(
+        &alarm,
+        alarmHour,
+        alarmMinute,
+        10
+    );
+
+    previousState = alarm.state;
+    displayedState = alarm.state;
 
     for (;;)
     {
-        /* Lecture de l'heure RTC */
         if (AppClock_Read(
                 &hrtc, &currentTime) == HAL_OK)
         {
-            /* Rafraichissement seulement si
-               les secondes ont change */
-            if (currentTime.seconds != lastSecond)
+            /* Actualiser la machine a etats */
+            AppAlarm_Update(
+                &alarm,
+                currentTime.hours,
+                currentTime.minutes,
+                currentTime.seconds
+            );
+
+            /* Detecter l'entree en SONNERIE */
+            if (alarm.state != previousState)
             {
-                OLED_ShowTime(
+                if (alarm.state == APP_ALARM_SONNERIE)
+                {
+                    ringingStartTick =
+                        osKernelGetTickCount();
+                }
+
+                previousState = alarm.state;
+            }
+
+            /*
+             * Simulation des commandes :
+             * 1re sonnerie -> SNOOZE apres 5 s
+             * 2e sonnerie -> STOP apres 5 s
+             */
+            if (alarm.state == APP_ALARM_SONNERIE)
+            {
+                uint32_t elapsed =
+                    osKernelGetTickCount()
+                    - ringingStartTick;
+
+                if (elapsed >=
+                    5U * osKernelGetTickFreq())
+                {
+                    if (testStage == 0)
+                    {
+                        AppAlarm_Snooze(
+                            &alarm,
+                            currentTime.hours,
+                            currentTime.minutes,
+                            currentTime.seconds
+                        );
+                        snoozeStartTick = osKernelGetTickCount();
+
+                        testStage = 1;
+                    }
+                    else if (testStage == 1)
+                    {
+                        AppAlarm_Stop(&alarm);
+                        testStage = 2;
+                    }
+                }
+            }
+            /* Test : STOP apres 3 secondes de SNOOZE */
+            if (testStage == 1 &&
+                alarm.state == APP_ALARM_SNOOZE)
+            {
+                uint32_t elapsed =
+                    osKernelGetTickCount() - snoozeStartTick;
+
+                if (elapsed >= 3U * osKernelGetTickFreq())
+                {
+                    AppAlarm_Stop(&alarm);
+                    testStage = 2;
+                }
+            }
+
+            /* Afficher l'heure ou le nouvel etat */
+            if (currentTime.seconds != lastSecond ||
+                alarm.state != displayedState)
+            {
+                OLED_ShowAlarm(
                     currentTime.hours,
                     currentTime.minutes,
-                    currentTime.seconds
+                    currentTime.seconds,
+                    alarm.state,
+                    alarm.enabled
                 );
 
                 lastSecond = currentTime.seconds;
+                displayedState = alarm.state;
             }
         }
 
-        /* Temporisation FreeRTOS */
         osDelay(100);
     }
 
-    /* USER CODE END 5 */
+  /* USER CODE END 5 */
 }
 
 /**
