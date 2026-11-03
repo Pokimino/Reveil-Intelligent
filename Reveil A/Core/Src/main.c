@@ -32,6 +32,27 @@
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
 
+typedef struct
+{
+    uint8_t hours;
+    uint8_t minutes;
+    uint8_t seconds;
+    uint8_t enabled;
+
+    AppAlarm_State_t state;
+
+} DisplayMessage_t;
+
+
+typedef enum
+{
+    APP_CMD_SNOOZE = 0,
+    APP_CMD_STOP,
+    APP_CMD_REARM
+
+} AppCommand_t;
+
+
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -56,11 +77,27 @@ osThreadId_t defaultTaskHandle;
 const osThreadAttr_t defaultTask_attributes = {
   .name = "defaultTask",
   .stack_size = 1024 * 4,
+  .priority = (osPriority_t) osPriorityAboveNormal,
+};
+/* Definitions for displayTask */
+osThreadId_t displayTaskHandle;
+const osThreadAttr_t displayTask_attributes = {
+  .name = "displayTask",
+  .stack_size = 1024 * 4,
   .priority = (osPriority_t) osPriorityNormal,
+};
+/* Definitions for commandTask */
+osThreadId_t commandTaskHandle;
+const osThreadAttr_t commandTask_attributes = {
+  .name = "commandTask",
+  .stack_size = 512 * 4,
+  .priority = (osPriority_t) osPriorityLow,
 };
 /* USER CODE BEGIN PV */
 volatile uint8_t oled_detected = 0;
 volatile uint8_t oled_address = 0;
+static osMessageQueueId_t displayQueueHandle;
+static osMessageQueueId_t commandQueueHandle;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -70,6 +107,8 @@ static void MX_USART2_UART_Init(void);
 static void MX_I2C1_Init(void);
 static void MX_RTC_Init(void);
 void StartDefaultTask(void *argument);
+void StartDisplayTask(void *argument);
+void StartCommandTask(void *argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -133,14 +172,50 @@ int main(void)
 
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
+
+  displayQueueHandle = osMessageQueueNew(
+      2,
+      sizeof(DisplayMessage_t),
+      NULL
+  );
+
+  if (displayQueueHandle == NULL)
+  {
+      Error_Handler();
+  }
+
+
+  commandQueueHandle = osMessageQueueNew(
+      8,
+      sizeof(AppCommand_t),
+      NULL
+  );
+
+  if (commandQueueHandle == NULL)
+  {
+      Error_Handler();
+  }
+
+
   /* USER CODE END RTOS_QUEUES */
 
   /* Create the thread(s) */
   /* creation of defaultTask */
   defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
 
+  /* creation of displayTask */
+  displayTaskHandle = osThreadNew(StartDisplayTask, NULL, &displayTask_attributes);
+
+  /* creation of commandTask */
+  commandTaskHandle = osThreadNew(StartCommandTask, NULL, &commandTask_attributes);
+
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
+  if (defaultTaskHandle == NULL ||
+      displayTaskHandle == NULL)
+  {
+      Error_Handler();
+  }
   /* USER CODE END RTOS_THREADS */
 
   /* USER CODE BEGIN RTOS_EVENTS */
@@ -387,37 +462,32 @@ static void MX_GPIO_Init(void)
   * @retval None
   */
 /* USER CODE END Header_StartDefaultTask */
+
 void StartDefaultTask(void *argument)
 {
-  /* USER CODE BEGIN 5 */
+    /* USER CODE BEGIN 5 */
 
     AppClock_Time_t currentTime;
     AppAlarm_t alarm;
 
     uint8_t lastSecond = 255;
-    AppAlarm_State_t previousState;
-    AppAlarm_State_t displayedState;
+    uint8_t lastEnabled = 255;
 
-    uint32_t ringingStartTick = 0;
-    uint32_t snoozeStartTick = 0;
-    uint8_t testStage = 0;
+    AppAlarm_State_t lastState =
+        (AppAlarm_State_t)255;
 
-    /* Initialiser le RTC */
+    /* Initialisation RTC */
     if (AppClock_Init(&hrtc) != HAL_OK)
     {
         Error_Handler();
     }
 
-    /* Initialiser l'OLED */
-    OLED_Init();
-
-    /* Lire l'heure de depart */
     if (AppClock_Read(&hrtc, &currentTime) != HAL_OK)
     {
         Error_Handler();
     }
 
-    /* Programmer l'alarme a la minute suivante */
+    /* Premiere alarme : minute suivante */
     uint8_t alarmHour = currentTime.hours;
     uint8_t alarmMinute = currentTime.minutes + 1;
 
@@ -427,7 +497,7 @@ void StartDefaultTask(void *argument)
         alarmHour = (alarmHour + 1) % 24;
     }
 
-    /* SNOOZE de 10 secondes pour le test */
+    /* SNOOZE de 10 secondes pour les tests */
     AppAlarm_Init(
         &alarm,
         alarmHour,
@@ -435,13 +505,11 @@ void StartDefaultTask(void *argument)
         10
     );
 
-    previousState = alarm.state;
-    displayedState = alarm.state;
-
     for (;;)
     {
         if (AppClock_Read(
-                &hrtc, &currentTime) == HAL_OK)
+                &hrtc,
+                &currentTime) == HAL_OK)
         {
             /* Actualiser la machine a etats */
             AppAlarm_Update(
@@ -451,86 +519,234 @@ void StartDefaultTask(void *argument)
                 currentTime.seconds
             );
 
-            /* Detecter l'entree en SONNERIE */
-            if (alarm.state != previousState)
+            /* Lire toutes les commandes en attente */
+            AppCommand_t cmd;
+
+            while (osMessageQueueGet(
+                       commandQueueHandle,
+                       &cmd,
+                       NULL,
+                       0) == osOK)
             {
-                if (alarm.state == APP_ALARM_SONNERIE)
+                switch (cmd)
                 {
-                    ringingStartTick =
-                        osKernelGetTickCount();
-                }
+                    case APP_CMD_SNOOZE:
 
-                previousState = alarm.state;
-            }
-
-            /*
-             * Simulation des commandes :
-             * 1re sonnerie -> SNOOZE apres 5 s
-             * 2e sonnerie -> STOP apres 5 s
-             */
-            if (alarm.state == APP_ALARM_SONNERIE)
-            {
-                uint32_t elapsed =
-                    osKernelGetTickCount()
-                    - ringingStartTick;
-
-                if (elapsed >=
-                    5U * osKernelGetTickFreq())
-                {
-                    if (testStage == 0)
-                    {
                         AppAlarm_Snooze(
                             &alarm,
                             currentTime.hours,
                             currentTime.minutes,
                             currentTime.seconds
                         );
-                        snoozeStartTick = osKernelGetTickCount();
 
-                        testStage = 1;
-                    }
-                    else if (testStage == 1)
-                    {
+                        break;
+
+                    case APP_CMD_STOP:
+
                         AppAlarm_Stop(&alarm);
-                        testStage = 2;
-                    }
+                        break;
+
+                    case APP_CMD_REARM:
+
+                        /* Programmer la minute suivante */
+                        alarmHour = currentTime.hours;
+                        alarmMinute =
+                            currentTime.minutes + 1;
+
+                        if (alarmMinute >= 60)
+                        {
+                            alarmMinute = 0;
+                            alarmHour =
+                                (alarmHour + 1) % 24;
+                        }
+
+                        AppAlarm_Init(
+                            &alarm,
+                            alarmHour,
+                            alarmMinute,
+                            10
+                        );
+
+                        break;
+
+                    default:
+                        break;
                 }
             }
-            /* Test : STOP apres 3 secondes de SNOOZE */
-            if (testStage == 1 &&
-                alarm.state == APP_ALARM_SNOOZE)
-            {
-                uint32_t elapsed =
-                    osKernelGetTickCount() - snoozeStartTick;
 
-                if (elapsed >= 3U * osKernelGetTickFreq())
-                {
-                    AppAlarm_Stop(&alarm);
-                    testStage = 2;
-                }
-            }
-
-            /* Afficher l'heure ou le nouvel etat */
+            /* Envoyer l'etat a la tache OLED */
             if (currentTime.seconds != lastSecond ||
-                alarm.state != displayedState)
+                alarm.state != lastState ||
+                alarm.enabled != lastEnabled)
             {
-                OLED_ShowAlarm(
-                    currentTime.hours,
-                    currentTime.minutes,
-                    currentTime.seconds,
-                    alarm.state,
-                    alarm.enabled
-                );
+                DisplayMessage_t msg;
+
+                msg.hours = currentTime.hours;
+                msg.minutes = currentTime.minutes;
+                msg.seconds = currentTime.seconds;
+                msg.state = alarm.state;
+                msg.enabled = alarm.enabled;
+
+                /* Communication sans attente */
+                if (osMessageQueuePut(
+                        displayQueueHandle,
+                        &msg,
+                        0,
+                        0) != osOK)
+                {
+                    DisplayMessage_t discarded;
+
+                    (void)osMessageQueueGet(
+                        displayQueueHandle,
+                        &discarded,
+                        NULL,
+                        0
+                    );
+
+                    (void)osMessageQueuePut(
+                        displayQueueHandle,
+                        &msg,
+                        0,
+                        0
+                    );
+                }
 
                 lastSecond = currentTime.seconds;
-                displayedState = alarm.state;
+                lastState = alarm.state;
+                lastEnabled = alarm.enabled;
             }
         }
 
         osDelay(100);
     }
 
-  /* USER CODE END 5 */
+    /* USER CODE END 5 */
+}
+
+
+/* USER CODE BEGIN Header_StartDisplayTask */
+/**
+* @brief Function implementing the displayTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartDisplayTask */
+void StartDisplayTask(void *argument)
+{
+  /* USER CODE BEGIN StartDisplayTask */
+	DisplayMessage_t msg;
+
+	/* Une seule tache initialise et utilise l'OLED */
+	OLED_Init();
+
+  /* Infinite loop */
+  for(;;)
+  {
+	  /* Attendre les nouvelles donnees */
+	      if (osMessageQueueGet(
+	              displayQueueHandle,
+	              &msg,
+	              NULL,
+	              osWaitForever) == osOK)
+	      {
+	          OLED_ShowAlarm(
+	              msg.hours,
+	              msg.minutes,
+	              msg.seconds,
+	              msg.state,
+	              msg.enabled
+	          );
+	      }
+  }
+  /* USER CODE END StartDisplayTask */
+}
+
+/* USER CODE BEGIN Header_StartCommandTask */
+/**
+* @brief Function implementing the commandTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartCommandTask */
+void StartCommandTask(void *argument)
+{
+  /* USER CODE BEGIN StartCommandTask */
+  /* Infinite loop */
+
+	uint8_t rx;
+
+	const char welcome[] =
+	    "\r\nREVEIL INTELLIGENT\r\n"
+	    "s = SNOOZE\r\n"
+	    "x = STOP\r\n"
+	    "r = REARM\r\n";
+
+	HAL_UART_Transmit(
+	    &huart2,
+	    (uint8_t *)welcome,
+	    sizeof(welcome) - 1,
+	    100
+	);
+
+	for (;;)
+	{
+	    /* Lecture d'un caractere sur USART2 */
+	    if (HAL_UART_Receive(
+	            &huart2,
+	            &rx,
+	            1,
+	            1) == HAL_OK)
+	    {
+	        AppCommand_t cmd;
+	        uint8_t valid = 1;
+
+	        switch (rx)
+	        {
+	            case 's':
+	            case 'S':
+	                cmd = APP_CMD_SNOOZE;
+	                break;
+
+	            case 'x':
+	            case 'X':
+	                cmd = APP_CMD_STOP;
+	                break;
+
+	            case 'r':
+	            case 'R':
+	                cmd = APP_CMD_REARM;
+	                break;
+
+	            default:
+	                valid = 0;
+	                break;
+	        }
+
+	        if (valid)
+	        {
+	            /* Envoyer l'ordre a la tache alarme */
+	            if (osMessageQueuePut(
+	                    commandQueueHandle,
+	                    &cmd,
+	                    0,
+	                    0) == osOK)
+	            {
+	                const char ack[] = "Commande recue\r\n";
+
+	                HAL_UART_Transmit(
+	                    &huart2,
+	                    (uint8_t *)ack,
+	                    sizeof(ack) - 1,
+	                    100
+	                );
+	            }
+	        }
+	    }
+
+	    osDelay(10);
+	}
+
+  /* USER CODE END StartCommandTask */
 }
 
 /**
