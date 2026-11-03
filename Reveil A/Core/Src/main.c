@@ -24,6 +24,8 @@
 /* USER CODE BEGIN Includes */
 #include "app_clock.h"
 #include "oled.h"
+#include "sound.h"
+#include "app_msg.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -33,7 +35,6 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -72,7 +73,7 @@ static void MX_TIM8_Init(void);
 void StartDefaultTask(void *argument);
 
 /* USER CODE BEGIN PFP */
-
+static void TestSon(void *argument);   /* temporaire */
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -142,6 +143,11 @@ int main(void)
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
+  Son_Init();
+
+  /* temporaire : simule la future tâche Réveil */
+  static const osThreadAttr_t test_attr = { .name = "TestSon", .stack_size = 128 * 4 };
+  osThreadNew(TestSon, NULL, &test_attr);
   /* USER CODE END RTOS_THREADS */
 
   /* USER CODE BEGIN RTOS_EVENTS */
@@ -447,7 +453,17 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-
+/* Tâche de test temporaire : envoie des ordres à la tâche Son */
+static void TestSon(void *argument)
+{
+  OrdreSon_t o;
+  for (;;)
+  {
+    o = MELODIE_ON;  osMessageQueuePut(Ordres_SonHandle, &o, 0, 0); osDelay(6000);
+    o = MELODIE_OFF; osMessageQueuePut(Ordres_SonHandle, &o, 0, 0); osDelay(1500);
+    o = BIP;         osMessageQueuePut(Ordres_SonHandle, &o, 0, 0); osDelay(2000);
+  }
+}
 /* USER CODE END 4 */
 
 /* USER CODE BEGIN Header_StartDefaultTask */
