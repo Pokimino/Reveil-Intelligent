@@ -1,26 +1,18 @@
-/*
- * buttons.c
- *
- *  Created on: Nov 3, 2026
- *      Author: simwi
+/* buttons.c : lecture des 2 boutons physiques
+ *   SW1 (PA15) = aube manuelle
+ *   SW2 (PB11) = crépuscule manuel
+ * Un rappui pendant l'animation lancée par le même bouton l'annule (géré par Eclairage).
  */
-
 #include "buttons.h"
 #include "app_msg.h"
 #include "main.h"
 
-/* Niveau lu sur la pin quand le bouton est ENFONCÉ.
- * Bouton branché entre la pin et GND + Pull-up dans CubeMX : GPIO_PIN_RESET.
- * Si rien ne se passe quand tu appuies : mets GPIO_PIN_SET ici
- * (et Pull-down dans CubeMX). */
+/* Niveau lu sur la pin quand le bouton est ENFONCÉ (vérifié sur la carte) */
 static const GPIO_PinState APPUYE = GPIO_PIN_RESET;
 
-/* Ce qu'on fait à chaque appui : pour l'instant c'est un test */
-static void appui_detecte(void)
+static void envoyer_lumiere(OrdreLumiere_t o)
 {
-  OrdreSon_t o = BIP;
-  osMessageQueuePut(Ordres_SonHandle, &o, 0, 0);   /* bip (on l'entend seulement si muet = 0) */
-  HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);      /* la LED verte de la carte change d'état */
+  osMessageQueuePut(Ordres_LumiereHandle, &o, 0, 0);
 }
 
 static void Boutons_Tache(void *argument)
@@ -35,12 +27,12 @@ static void Boutons_Tache(void *argument)
 
     if (sw1 && !sw1_avant)      /* SW1 vient d'être enfoncé */
     {
-      appui_detecte();          /* plus tard : ordre AUBE à l'éclairage */
+      envoyer_lumiere(AUBE_MANUELLE);
     }
 
     if (sw2 && !sw2_avant)      /* SW2 vient d'être enfoncé */
     {
-      appui_detecte();          /* plus tard : ordre CRÉPUSCULE à l'éclairage */
+      envoyer_lumiere(CREPUSCULE_MANUEL);
     }
 
     sw1_avant = sw1;
