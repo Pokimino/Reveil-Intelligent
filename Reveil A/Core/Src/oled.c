@@ -429,13 +429,8 @@ void OLED_ShowPage(OLED_Page_t page,
 
             OLED_Texte(4, 41, ligne);
 
-            /* Regrouper les deux seuils sur une seule ligne */
-            snprintf(ligne, sizeof(ligne),
-                     "JOUR:%u  NUIT:%u",
-                     (unsigned)d->config.S_jour,
-                     (unsigned)d->config.S_nuit);
 
-            OLED_Texte(4, 53, ligne);
+
 
             break;
 

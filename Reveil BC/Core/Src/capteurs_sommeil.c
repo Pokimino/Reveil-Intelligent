@@ -18,7 +18,7 @@ extern I2C_HandleTypeDef hi2c1;
 extern CAN_HandleTypeDef hcan1;
 
 /* ====== À changer avant de flasher : 'B' ou 'C' ====== */
-static const char CARTE = 'B';
+static const char CARTE = 'C';
 
 /* Format des messages CAN : doit être le même sur la carte A */
 #define ID_CAN_B           0x21
