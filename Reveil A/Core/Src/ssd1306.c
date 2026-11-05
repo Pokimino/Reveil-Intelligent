@@ -179,8 +179,11 @@ uint8_t SSD1306_Init(void) {
 	
 	/* Init LCD */
 	SSD1306_WRITECOMMAND(0xAE); //display off
-	SSD1306_WRITECOMMAND(0x20); //Set Memory Addressing Mode   
-	SSD1306_WRITECOMMAND(0x10); //00,Horizontal Addressing Mode;01,Vertical Addressing Mode;10,Page Addressing Mode (RESET);11,Invalid
+	/* Selection du mode d'adressage */
+	SSD1306_WRITECOMMAND(0x20);
+
+	/* Mode PAGE, compatible avec UpdateScreen */
+	SSD1306_WRITECOMMAND(0x02);
 	SSD1306_WRITECOMMAND(0xB0); //Set Page Start Address for Page Addressing Mode,0-7
 	SSD1306_WRITECOMMAND(0xC8); //Set COM Output Scan Direction
 	SSD1306_WRITECOMMAND(0x00); //---set low column address
@@ -645,7 +648,7 @@ dt[0] = reg;
 uint8_t i;
 for(i = 0; i < count; i++)
 dt[i+1] = data[i];
-HAL_I2C_Master_Transmit(&hi2c1, address, dt, count+1, 10);
+HAL_I2C_Master_Transmit(&hi2c1, address, dt, count+1, 100);
 }
 
 
@@ -653,5 +656,5 @@ void ssd1306_I2C_Write(uint8_t address, uint8_t reg, uint8_t data) {
 	uint8_t dt[2];
 	dt[0] = reg;
 	dt[1] = data;
-	HAL_I2C_Master_Transmit(&hi2c1, address, dt, 2, 10);
+	HAL_I2C_Master_Transmit(&hi2c1, address, dt, 2, 100);
 }

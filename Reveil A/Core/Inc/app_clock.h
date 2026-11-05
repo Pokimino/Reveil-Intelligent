@@ -27,6 +27,13 @@ HAL_StatusTypeDef AppClock_Read(
     RTC_HandleTypeDef *rtc,
     AppClock_Time_t *time
 );
+/* Modification de l'heure RTC */
+HAL_StatusTypeDef AppClock_SetTime(
+    RTC_HandleTypeDef *rtc,
+    uint8_t hours,
+    uint8_t minutes,
+    uint8_t seconds
+);
 
 #endif
  /* INC_APP_CLOCK_H_ */

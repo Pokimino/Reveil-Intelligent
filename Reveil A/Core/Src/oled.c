@@ -91,4 +91,114 @@ void OLED_ShowTime(
 }
 
 
+void OLED_ShowAlarm(
+    uint8_t hours,
+    uint8_t minutes,
+    uint8_t seconds,
+    uint8_t alarmHours,
+    uint8_t alarmMinutes,
+    AppAlarm_State_t state,
+    uint8_t enabled)
+{
+    char timeText[9];
+
+    /* Texte : AL 07:30 OFF */
+    char alarmText[13] = "AL 00:00 OFF";
+
+    /* Conversion de l'heure RTC */
+    timeText[0] = '0' + hours / 10;
+    timeText[1] = '0' + hours % 10;
+    timeText[2] = ':';
+    timeText[3] = '0' + minutes / 10;
+    timeText[4] = '0' + minutes % 10;
+    timeText[5] = ':';
+    timeText[6] = '0' + seconds / 10;
+    timeText[7] = '0' + seconds % 10;
+    timeText[8] = '\0';
+
+    /* Conversion de l'heure programmee */
+    alarmText[3] = '0' + alarmHours / 10;
+    alarmText[4] = '0' + alarmHours % 10;
+    alarmText[6] = '0' + alarmMinutes / 10;
+    alarmText[7] = '0' + alarmMinutes % 10;
+
+    /* Affichage ON ou OFF */
+    if (enabled)
+    {
+        alarmText[9] = 'O';
+        alarmText[10] = 'N';
+        alarmText[11] = '\0';
+    }
+
+    /* Effacement */
+    SSD1306_Fill(SSD1306_COLOR_BLACK);
+
+    /* Ligne 1 : titre */
+    SSD1306_GotoXY(43, 8);
+    SSD1306_Puts(
+        "REVEIL",
+        &Font_7x10,
+        SSD1306_COLOR_WHITE
+    );
+
+    /* Ligne 2 : heure actuelle */
+    SSD1306_GotoXY(20, 19);
+    SSD1306_Puts(
+        timeText,
+        &Font_11x18,
+        SSD1306_COLOR_WHITE
+    );
+
+    /* Ligne 3 : heure de l'alarme */
+    SSD1306_GotoXY(22, 39);
+    SSD1306_Puts(
+        alarmText,
+        &Font_7x10,
+        SSD1306_COLOR_WHITE
+    );
+
+    /* Ligne 4 : etat */
+    if (state == APP_ALARM_SONNERIE)
+    {
+        SSD1306_GotoXY(36, 52);
+        SSD1306_Puts(
+            "SONNERIE",
+            &Font_7x10,
+            SSD1306_COLOR_WHITE
+        );
+    }
+    else if (state == APP_ALARM_SNOOZE)
+    {
+        SSD1306_GotoXY(43, 52);
+        SSD1306_Puts(
+            "SNOOZE",
+            &Font_7x10,
+            SSD1306_COLOR_WHITE
+        );
+    }
+    else if (enabled)
+    {
+        SSD1306_GotoXY(22, 52);
+        SSD1306_Puts(
+            "ALARME PRETE",
+            &Font_7x10,
+            SSD1306_COLOR_WHITE
+        );
+    }
+    else
+    {
+        SSD1306_GotoXY(29, 52);
+        SSD1306_Puts(
+            "ALARME OFF",
+            &Font_7x10,
+            SSD1306_COLOR_WHITE
+        );
+    }
+
+    /* Mise a jour de l'ecran */
+    SSD1306_UpdateScreen();
+}
+
+
+
 

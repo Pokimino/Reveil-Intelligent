@@ -104,3 +104,35 @@ HAL_StatusTypeDef AppClock_Read(
 
     return HAL_OK;
 }
+
+HAL_StatusTypeDef AppClock_SetTime(
+    RTC_HandleTypeDef *rtc,
+    uint8_t hours,
+    uint8_t minutes,
+    uint8_t seconds)
+{
+    /* Verification des parametres */
+    if (rtc == NULL ||
+        hours > 23 ||
+        minutes > 59 ||
+        seconds > 59)
+    {
+        return HAL_ERROR;
+    }
+
+    RTC_TimeTypeDef sTime = {0};
+
+    sTime.Hours = hours;
+    sTime.Minutes = minutes;
+    sTime.Seconds = seconds;
+
+    sTime.DayLightSaving = RTC_DAYLIGHTSAVING_NONE;
+    sTime.StoreOperation = RTC_STOREOPERATION_RESET;
+
+    return HAL_RTC_SetTime(
+        rtc,
+        &sTime,
+        RTC_FORMAT_BIN
+    );
+}
+
