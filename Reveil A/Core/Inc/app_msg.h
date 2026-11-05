@@ -23,8 +23,9 @@ typedef enum { NAV_PREC, NAV_VALID, NAV_SUIV, SIESTE } TypeCmde_t;
 typedef struct { TypeCmde_t type; uint32_t valeur; } Cmde_t;
 extern osMessageQueueId_t CmdesHandle;
 
-/* Mesures de la chambre (Infos) : écrites par la tâche Capteurs une fois par seconde,
- * lues par Reveil (L), Ventilation et Interface (Tmes, IQA).
+/* Mesures de la chambre et du dormeur (Infos) :
+ *   écrites par la tâche Capteurs (Tmes, IQA, L, Vpot) et par la tâche ReceptionCAN (d1..d4),
+ *   lues par Reveil (L), Sommeil (d1..d4), Ventilation et Interface (Tmes, IQA).
  * Plusieurs tâches y accèdent : on passe par un mutex. Pour lire, appeler Infos_Lire(&copie). */
 typedef struct {
   float    Tmes;   /* température mesurée en °C (capteur TC72) */
@@ -32,6 +33,8 @@ typedef struct {
                       Vaut 0 pendant les 45 premières secondes (démarrage de l'algorithme). */
   uint16_t L;      /* luminosité : 0 = noir, 100 = plein jour */
   uint16_t Vpot;   /* position du potentiomètre, de 0 à 100 : vitesse du ventilateur en mode manuel */
+  uint16_t d1, d2, d3, d4;   /* distances du dormeur en mm (tête, tronc, bassin, jambes),
+                                reçues des cartes B et C par CAN. 0xFFFF = mesure invalide */
 } Infos_t;
 extern Infos_t Infos;
 extern osMutexId_t Infos_MutexHandle;
