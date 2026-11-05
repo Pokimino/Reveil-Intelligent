@@ -3,7 +3,10 @@
  *   Sortie  : Etat_Sommeil = { session en cours, score de la dernière nuit, de la dernière sieste }
  *
  *   Sessions :
- *     - NOCTURNE : démarre au passage en NUIT, se termine au passage en JOUR -> Q_nuit
+ *     - NOCTURNE : en mode NUIT, démarre au COUCHER, se termine au LEVER (ou au passage en JOUR) -> Q_nuit
+ *         coucher = au moins N_ZONES_COUCHER zones voient quelqu'un pendant D_COUCHER_MS
+ *         lever   = plus aucune zone ne voit personne pendant D_LEVER_MS
+ *         (une zone "voit quelqu'un" quand sa distance est valable, 0xFFFF = personne)
  *     - SIESTE   : appui long sur la touche 2 en mode JOUR (bip), nouvel appui long pour finir (bip)
  *                  -> Q_sieste ; si la nuit tombe pendant la sieste, la session continue en NOCTURNE
  *   Mouvement : une zone dont la distance s'écarte de sa référence d'au moins S_MM pendant au moins
@@ -23,6 +26,9 @@
 #define DTA_MS     10000     /* fenêtre d'agitation : 10 s ... */
 #define N_EP           3     /* ... avec au moins 3 mouvements */
 #define NB_ZONES       4     /* tête, tronc, bassin, jambes */
+#define N_ZONES_COUCHER 2    /* coucher : au moins 2 zones occupées ... */
+#define D_COUCHER_MS 3000    /* ... pendant 3 s (court pour la démo) */
+#define D_LEVER_MS   5000    /* lever : plus aucune zone occupée pendant 5 s */
 #define INVALIDE  0xFFFF
 
 /* Données de la session en cours */
@@ -41,7 +47,9 @@ volatile SessionSommeil_t session_sommeil;   /* session en cours */
 volatile uint8_t  Q_nuit_debug = SCORE_AUCUN, Q_sieste_debug = SCORE_AUCUN;   /* derniers scores */
 volatile uint32_t nb_mouvements, nb_episodes;
 volatile uint8_t  score_courant;           /* score qu'aurait la session si elle finissait maintenant */
-volatile uint8_t  sieste_test;             /* mettre à 1 = comme un appui long (en attendant l'Interface) */
+volatile uint8_t  sieste_test;             /* mettre à 1 = comme un appui long (sans passer par l'Interface) */
+volatile uint8_t  zones_occupees;          /* nombre de zones qui voient quelqu'un (0 à 4) */
+volatile uint8_t  couche, leve;            /* 1 = coucher / lever détecté en ce moment */
 
 
 static void bip(void)
@@ -133,6 +141,43 @@ static void compter_mouvements(const uint16_t d[NB_ZONES], uint32_t maintenant)
   }
 }
 
+/* Détection du coucher et du lever à partir des zones occupées */
+static uint8_t  presence, absence;         /* 1 si la condition est vraie en ce moment */
+static uint32_t debut_presence, debut_absence;
+
+static void detecter_coucher_lever(const uint16_t d[NB_ZONES], uint32_t maintenant)
+{
+  uint8_t n = 0;
+  for (int i = 0; i < NB_ZONES; i++)
+  {
+    if (d[i] != INVALIDE) n++;
+  }
+  zones_occupees = n;
+
+  /* Coucher : au moins N_ZONES_COUCHER zones occupées sans interruption depuis D_COUCHER_MS */
+  if (n >= N_ZONES_COUCHER)
+  {
+    if (!presence) { presence = 1; debut_presence = maintenant; }
+  }
+  else
+  {
+    presence = 0;
+  }
+
+  /* Lever : aucune zone occupée sans interruption depuis D_LEVER_MS */
+  if (n == 0)
+  {
+    if (!absence) { absence = 1; debut_absence = maintenant; }
+  }
+  else
+  {
+    absence = 0;
+  }
+
+  couche = presence && (maintenant - debut_presence >= D_COUCHER_MS);
+  leve   = absence  && (maintenant - debut_absence  >= D_LEVER_MS);
+}
+
 static void Sommeil_Tache(void *argument)
 {
   SessionSommeil_t etat = SOMMEIL_INACTIF;
@@ -146,6 +191,7 @@ static void Sommeil_Tache(void *argument)
     uint16_t d[NB_ZONES] = { in.d1, in.d2, in.d3, in.d4 };
     Mode_t mode = Mode_Lire();
     uint32_t maintenant = osKernelGetTickCount();
+    detecter_coucher_lever(d, maintenant);
 
     /* Evt_Sieste reçu ? (on le lit sans attendre, puis il est effacé) */
     uint8_t sieste = (osSemaphoreAcquire(Evt_SiesteHandle, 0) == osOK);
@@ -164,7 +210,7 @@ static void Sommeil_Tache(void *argument)
           bip();
           etat = SOMMEIL_SIESTE;
         }
-        else if (mode == MODE_NUIT)
+        else if (mode == MODE_NUIT && couche)      /* nuit + quelqu'un s'est couché */
         {
           nouvelle_session(d);
           etat = SOMMEIL_NOCTURNE;
@@ -187,7 +233,7 @@ static void Sommeil_Tache(void *argument)
 
       case SOMMEIL_NOCTURNE:
         compter_mouvements(d, maintenant);
-        if (mode == MODE_JOUR)           /* fin de nuit */
+        if (leve || mode == MODE_JOUR)   /* lever (ou jour revenu) : fin de nuit */
         {
           Q_nuit = score();
           etat = SOMMEIL_INACTIF;
