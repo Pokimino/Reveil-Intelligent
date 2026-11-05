@@ -1308,6 +1308,10 @@ void StartDefaultTask(void *argument)
 
     AppAlarm_State_t lastState =
         (AppAlarm_State_t)255;
+    /* Y1.3 : suivi du son */
+    AppAlarm_State_t dernierEtatSon = APP_ALARM_SILENCIEUSE;
+    uint8_t bipStopEnAttente = 0;
+
 
     /* Initialisation RTC */
     if (AppClock_Init(&hrtc) != HAL_OK)
@@ -1400,17 +1404,26 @@ void StartDefaultTask(void *argument)
 
                         break;
 
+
                     case APP_CMD_STOP:
+
+                        /* Bip uniquement si on arrete une alarme en cours */
+                        if (alarm.state == APP_ALARM_SONNERIE ||
+                            alarm.state == APP_ALARM_SNOOZE)
+                        {
+                            bipStopEnAttente = 1;
+                        }
 
                         AppAlarm_Stop(&alarm);
 
                         if (AppAlarmStorage_Save(
-                                    &hrtc, &alarm) != HAL_OK)
-                            {
-                                Error_Handler();
-                            }
+                                &hrtc, &alarm) != HAL_OK)
+                        {
+                            Error_Handler();
+                        }
 
                         break;
+
 
                     case APP_CMD_REARM:
 
@@ -1540,6 +1553,114 @@ void StartDefaultTask(void *argument)
                         break;
                 }
             }
+
+            /* ===== Y1.2 : Reception des gestes ===== */
+            Geste_t geste;
+
+            while (osMessageQueueGet(
+                       Evt_GestesHandle,
+                       &geste,
+                       NULL,
+                       0) == osOK)
+            {
+                switch (geste)
+                {
+                    case GESTE_SNOOZE:
+                        /* Snooze seulement pendant SONNERIE */
+                        AppAlarm_Snooze(
+                            &alarm,
+                            currentTime.hours,
+                            currentTime.minutes,
+                            currentTime.seconds
+                        );
+                        break;
+
+                    case GESTE_STOP:
+                        /* STOP autorise en SONNERIE et SNOOZE */
+                        if (alarm.state == APP_ALARM_SONNERIE ||
+                            alarm.state == APP_ALARM_SNOOZE)
+                        {
+                        	bipStopEnAttente = 1;
+                            AppAlarm_Stop(&alarm);
+
+                            /* Sauvegarder l'alarme desactivee */
+                            if (AppAlarmStorage_Save(
+                                    &hrtc,
+                                    &alarm) != HAL_OK)
+                            {
+                                Error_Handler();
+                            }
+                        }
+                        break;
+
+                    default:
+                        break;
+                }
+            }
+
+
+            /* ===== Y1.3 : commande de la tache Son ===== */
+
+            /* Detecter les changements d'etat de l'alarme */
+            if (alarm.state != dernierEtatSon)
+            {
+                OrdreSon_t ordreSon;
+
+                if (alarm.state == APP_ALARM_SONNERIE)
+                {
+                    /* L'alarme commence ou reprend */
+                    ordreSon = MELODIE_ON;
+                }
+                else
+                {
+                    /* SNOOZE, STOP ou desactivation */
+                    ordreSon = MELODIE_OFF;
+                }
+
+                /* Envoyer l'ordre a la tache Son */
+                if (osMessageQueuePut(
+                        Ordres_SonHandle,
+                        &ordreSon,
+                        0,
+                        0) == osOK)
+                {
+                    dernierEtatSon = alarm.state;
+                }
+            }
+
+            /* Bip de confirmation apres un STOP */
+            if (bipStopEnAttente &&
+                alarm.state == APP_ALARM_SILENCIEUSE &&
+                dernierEtatSon == APP_ALARM_SILENCIEUSE)
+            {
+                OrdreSon_t ordreSon = BIP;
+
+                if (osMessageQueuePut(
+                        Ordres_SonHandle,
+                        &ordreSon,
+                        0,
+                        0) == osOK)
+                {
+                    bipStopEnAttente = 0;
+                }
+            }
+
+
+
+
+            /* Partager l'etat du reveil avec les autres taches */
+            EtatReveil_t etatPartage = {
+                .h = currentTime.hours,
+                .m = currentTime.minutes,
+                .s = currentTime.seconds,
+                .alarme_h = alarm.hours,
+                .alarme_m = alarm.minutes,
+                .alarme_active = alarm.enabled,
+                .etat = alarm.state
+            };
+
+            EtatReveil_Ecrire(&etatPartage);
+
 
             /* Envoyer l'etat a la tache OLED */
 
