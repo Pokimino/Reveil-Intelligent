@@ -38,6 +38,7 @@
 #include "ventilation.h"
 #include "reception_can.h"
 #include "partage.h"
+#include "mode_jour_nuit.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -566,7 +567,7 @@ int main(void)
   Capteurs_Init();
   Ventilation_Init();
   ReceptionCAN_Init();
-
+  ModeJourNuit_Init();
   /* USER CODE END RTOS_THREADS */
 
   /* USER CODE BEGIN RTOS_EVENTS */

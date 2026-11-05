@@ -4,16 +4,15 @@
 #include "lights.h"
 #include "app_msg.h"
 #include "main.h"
+#include "partage.h"
 
 extern TIM_HandleTypeDef htim3;
 
 osMessageQueueId_t Ordres_LumiereHandle;
 volatile EtatLumiere_t Etat_Lumiere = LUMIERE_INACTIVE;
 
-/* ---------- Réglages (plus tard : lus dans Config) ---------- */
-#define D_AUBE_MS        20000   /* durée de la montée bleue (courte pour le test) */
-#define D_PALIER_MS      10000   /* durée du palier bleu à IMAX */
-#define D_CREPUSCULE_MS  20000   /* durée de la descente orange */
+/* ---------- Réglages ---------- */
+/* Les durées (aube, palier, crépuscule) sont lues dans Config (partage.h) */
 #define IMAX             150     /* intensité maximale, de 0 à 255 */
 #define PAS_RAMPE_MS     50      /* les LEDs sont mises à jour toutes les 50 ms */
 
@@ -97,6 +96,12 @@ static void Eclairage_Tache(void *argument)
       }
       /* sinon : ordre automatique ignoré, une animation lancée à la main est en cours */
     }
+
+    Config_t cfg;
+    Config_Lire(&cfg);
+    const uint32_t D_AUBE_MS       = cfg.D_aube_ms;
+    const uint32_t D_PALIER_MS     = cfg.D_palier_ms;
+    const uint32_t D_CREPUSCULE_MS = cfg.D_crepuscule_ms;
 
     uint32_t t = osKernelGetTickCount() - debut;
 

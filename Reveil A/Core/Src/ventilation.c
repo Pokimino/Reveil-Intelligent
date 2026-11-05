@@ -6,17 +6,16 @@
 #include "ventilation.h"
 #include "app_msg.h"
 #include "main.h"
+#include "partage.h"
 
 extern TIM_HandleTypeDef htim2;
 
 volatile uint8_t Vent_Manuel = 0;   /* écrit par Interface (touche 2 sur l'écran VENTILATION) */
 
 /* ---------- Réglages (plus tard : lus dans Config) ---------- */
-#define TCONS          24.0f   /* consigne de température (°C) */
 #define H_TEMP          0.5f   /* hystérésis en température (°C) */
 #define K              20.0f   /* % de vitesse ajouté par °C au-dessus de la consigne */
 #define VMAX          100      /* vitesse max (%) */
-#define SEUIL_IQA     150      /* seuil de qualité d'air (indice VOC, 100 = moyenne) */
 #define H_IQA          20      /* hystérésis en qualité d'air */
 #define D_AV_MS     10000      /* aération : durée en marche avant */
 #define D_AR_MS      5000      /* aération : durée en marche arrière */
@@ -39,8 +38,11 @@ static void moteur(uint8_t vitesse, Sens_t sens)
 }
 
 /* Aérer passe avant rafraîchir. L'hystérésis (h) évite d'osciller autour des seuils. */
-static EtatVent_t choix_auto(EtatVent_t etat, const Infos_t *in)
+static EtatVent_t choix_auto(EtatVent_t etat, const Infos_t *in, const Config_t *cfg)
 {
+  const float    TCONS     = cfg->Tcons;       /* consigne de température (Config) */
+  const uint16_t SEUIL_IQA = cfg->seuil_IQA;   /* seuil de qualité d'air (Config) */
+
   if (in->IQA > SEUIL_IQA + H_IQA || (etat == AERER && in->IQA >= SEUIL_IQA - H_IQA))
   {
     return AERER;
@@ -64,13 +66,15 @@ static void Ventilation_Tache(void *argument)
 
   for (;;)
   {
+    Config_t cfg;
     Infos_Lire(&in);
+    Config_Lire(&cfg);
     uint32_t t = osKernelGetTickCount() - debut_etat;
     EtatVent_t nouvel;
 
     if (Vent_Manuel)                              nouvel = MANUEL;   /* immédiat, prioritaire */
     else if (etat != MANUEL && t < T_ANTI_OSC_MS) nouvel = etat;     /* anti-oscillation */
-    else                                          nouvel = choix_auto(etat, &in);
+    else                                          nouvel = choix_auto(etat, &in, &cfg);
 
     if (nouvel != etat)
     {
@@ -91,7 +95,7 @@ static void Ventilation_Tache(void *argument)
         break;
       case RAFRAICHIR:
       {
-        float v = K * (in.Tmes - TCONS);
+        float v = K * (in.Tmes - cfg.Tcons);
         if (v < 0)    v = 0;
         if (v > VMAX) v = VMAX;
         vitesse = (uint8_t)v;

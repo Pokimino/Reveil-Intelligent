@@ -9,6 +9,7 @@
 #include "sound.h"
 #include "app_msg.h"
 #include "main.h"
+#include "partage.h"
 
 extern TIM_HandleTypeDef htim8;          /* créé par CubeMX dans main.c */
 osMessageQueueId_t Ordres_SonHandle;     /* boîte aux lettres Ordres_Son */
@@ -35,17 +36,20 @@ static const uint8_t longueurs[] = {
   sizeof(melodie0) / sizeof(Note_t),
   sizeof(melodie1) / sizeof(Note_t)
 };
-static volatile uint8_t id_melodie = 0;
 
 void Son_ChoisirMelodie(uint8_t id)
 {
-  if (id < 2) id_melodie = id;
+  Config_t cfg;
+  if (id >= 2) return;
+  Config_Lire(&cfg);
+  cfg.id_melodie = id;
+  Config_Ecrire(&cfg);
 }
 
 /* Règle le timer sur une fréquence (compteur à 1 MHz) ; freq = 0 : silence */
 static void buzzer_jouer(uint16_t freq)
 {
-  const uint8_t muet = 1;   /* 1 = buzzer coupé, 0 = son normal */
+  const uint8_t muet = 0;   /* 1 = buzzer coupé, 0 = son normal */
 
   if (muet || freq == 0)
   {
@@ -77,7 +81,7 @@ static void Son_Tache(void *argument)
       switch (ordre)
       {
         case MELODIE_ON:
-          id = id_melodie;
+          { Config_t cfg; Config_Lire(&cfg); id = (cfg.id_melodie < 2) ? cfg.id_melodie : 0; }
           rang = 0;
           active = 1;
           buzzer_jouer(melodies[id][0].freq);
