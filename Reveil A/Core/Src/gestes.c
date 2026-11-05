@@ -1,9 +1,8 @@
 /* gestes.c (carte A) : tâche Gestes -- STOP et SNOOZE sans contact (suit le diagramme de la conception)
  *   TOF1 = capteur gauche (dG), TOF2 = capteur droit (dD), même code d'initialisation que le cours
- *   - une main qui PASSE au-dessus d'un capteur (présente entre T_MIN et T_MAX, validée quand elle
- *     repart) -> SNOOZE
- *   - deux mains maintenues pendant T_STOP -> STOP (prioritaire : si la 2e main arrive, on oublie
- *     le snooze)
+ *   - un passage rapide de la main (au-dessus d'un capteur OU des deux) : le geste entier dure entre
+ *     T_MIN et T_MAX, il est validé quand toutes les mains sont reparties -> SNOOZE
+ *   - deux mains maintenues pendant T_STOP -> STOP (prioritaire sur le snooze)
  *   - les gestes ne sont envoyés au Réveil que si l'alarme sonne ou est en snooze
  *   Méthode du cours temps réel : interruption INTOF -> sémaphore -> la tâche lit la mesure.
  *   Bus I2C partagé (OLED, capteur d'air) : chaque accès aux ToF prend I2C1_MutexHandle.
@@ -27,7 +26,7 @@ static VL53L1_Dev_t tof[2];
 static osSemaphoreId_t SemToFHandle;
 static volatile uint8_t tof_pret[2];
 
-typedef enum { ATTENTE, UNE_MAIN, DEUX_MAINS } EtatGeste_t;
+typedef enum { ATTENTE, UNE_MAIN, DEUX_MAINS, RETRAIT } EtatGeste_t;   /* RETRAIT : après un STOP, attendre que les mains partent */
 
 /* Pour le debug (Live Expressions) */
 volatile uint16_t   distance_geste[2];      /* dernière distance mesurée (mm) */
@@ -106,11 +105,22 @@ static void geste_reconnu(Geste_t g)
 }
 
 
+/* Toutes les mains sont reparties : si le geste a été rapide, c'est un SNOOZE */
+static void fin_de_passage(uint32_t duree)
+{
+  if (duree >= T_MIN_MS && duree <= T_MAX_MS)
+  {
+    geste_reconnu(GESTE_SNOOZE);
+  }
+}
+
+
 /* ================== Tâche ================== */
 static void Gestes_Tache(void *argument)
 {
   uint32_t derniere_mesure[2] = { 0, 0 };
-  uint32_t debut = 0;                      /* début du passage (UNE_MAIN) ou du maintien (DEUX_MAINS) */
+  uint32_t debut_geste = 0;                /* apparition de la première main */
+  uint32_t debut_deux = 0;                 /* depuis quand les deux mains sont là */
   EtatGeste_t etat = ATTENTE;
 
   /* Les 2 ToF en reset, puis initialisation un par un (bus I2C réservé pendant ce temps) */
@@ -156,35 +166,47 @@ static void Gestes_Tache(void *argument)
     switch (etat)
     {
       case ATTENTE:
-        if (nb_mains == 2)      { etat = DEUX_MAINS; debut = maintenant; }
-        else if (nb_mains == 1) { etat = UNE_MAIN;   debut = maintenant; }
+        if (nb_mains > 0)                          /* début d'un geste */
+        {
+          debut_geste = maintenant;
+          debut_deux = maintenant;
+          etat = (nb_mains == 2) ? DEUX_MAINS : UNE_MAIN;
+        }
         break;
 
       case UNE_MAIN:
-        if (nb_mains == 2)                         /* 2e main : le STOP est prioritaire */
+        if (nb_mains == 2)                         /* 2e main : on commence peut-être un STOP */
         {
           etat = DEUX_MAINS;
-          debut = maintenant;
+          debut_deux = maintenant;
         }
-        else if (nb_mains == 0)                    /* main retirée : était-ce un passage ? */
+        else if (nb_mains == 0)                    /* main repartie : était-ce un passage rapide ? */
         {
-          uint32_t duree = maintenant - debut;
-          if (duree >= T_MIN_MS && duree <= T_MAX_MS)
-          {
-            geste_reconnu(GESTE_SNOOZE);
-          }
+          fin_de_passage(maintenant - debut_geste);
           etat = ATTENTE;
         }
         break;
 
       case DEUX_MAINS:
-        if (nb_mains < 2)                          /* une main retirée avant T_STOP : abandon */
-        {
-          etat = ATTENTE;
-        }
-        else if (maintenant - debut >= T_STOP_MS)  /* maintien réussi */
+        if (nb_mains == 2 && maintenant - debut_deux >= T_STOP_MS)   /* maintien réussi */
         {
           geste_reconnu(GESTE_STOP);
+          etat = RETRAIT;
+        }
+        else if (nb_mains == 1)                    /* une main repart : le geste continue */
+        {
+          etat = UNE_MAIN;
+        }
+        else if (nb_mains == 0)                    /* les deux repartent ensemble : passage rapide ? */
+        {
+          fin_de_passage(maintenant - debut_geste);
+          etat = ATTENTE;
+        }
+        break;
+
+      case RETRAIT:                                /* après un STOP : pas de nouveau geste tant que */
+        if (nb_mains == 0)                         /* les mains ne sont pas reparties */
+        {
           etat = ATTENTE;
         }
         break;
