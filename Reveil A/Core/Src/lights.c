@@ -21,16 +21,19 @@ volatile EtatLumiere_t Etat_Lumiere = LUMIERE_INACTIVE;
 /* ================== Pilotage des LEDs (type WS2812) ==================
  * Chaque LED attend 24 bits (8 vert, 8 rouge, 8 bleu), envoyés sur un seul fil.
  * Un bit = une période de PWM de 1,25 us (100 coups d'horloge à 80 MHz) :
- *   bit à 1 = signal haut pendant 0,8 us -> 64
- *   bit à 0 = signal haut pendant 0,4 us -> 32
+ *   bit à 1 = signal haut pendant 0,7 us -> 56
+ *   bit à 0 = signal haut pendant 0,3 us -> 24
+ *   (valeurs acceptées par les 2 familles de LEDs WS2812B et SK6812, avec un maximum de marge)
  * Le DMA recopie le tableau dans le timer, une valeur par période, sans occuper le processeur.
  * Les 4 LEDs sont branchées en chaîne : on envoie 4 x 24 bits à la suite. */
 #define NB_LEDS   4
-#define BIT_1     64
-#define BIT_0     32
+#define BIT_1     56
+#define BIT_0     24
+#define NB_DEBUT  3    /* 3 périodes à 0 au début : si le DMA rate la toute première valeur,
+                          c'est un de ces 0 qui est perdu, pas un bit de couleur */
 #define NB_RESET  50   /* 50 périodes à 0 à la fin : les LEDs comprennent que la trame est finie */
 
-static uint16_t trame[NB_LEDS * 24 + NB_RESET];
+static uint16_t trame[NB_DEBUT + NB_LEDS * 24 + NB_RESET];
 
 /* Met les 4 LEDs à la même couleur (rouge, vert, bleu : de 0 à 255 chacun) */
 static void leds_afficher(uint8_t r, uint8_t g, uint8_t b)
@@ -38,6 +41,10 @@ static void leds_afficher(uint8_t r, uint8_t g, uint8_t b)
   uint32_t couleur = ((uint32_t)g << 16) | ((uint32_t)r << 8) | b;   /* ordre attendu : vert, rouge, bleu */
   int k = 0;
 
+  for (int i = 0; i < NB_DEBUT; i++)
+  {
+    trame[k++] = 0;
+  }
   for (int led = 0; led < NB_LEDS; led++)
   {
     for (int bit = 23; bit >= 0; bit--)          /* bit de poids fort en premier */
