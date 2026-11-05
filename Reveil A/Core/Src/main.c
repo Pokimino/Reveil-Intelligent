@@ -39,6 +39,7 @@
 #include "partage.h"
 #include "mode_jour_nuit.h"
 #include "gestes.h"
+#include "reglages.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -304,8 +305,9 @@ static void App_RunTerminal(
         "s = SNOOZE\r\n"
         "x = STOP\r\n"
         "p = TEST\r\n"
-    );
 
+    );
+    Reglages_Aide(uart);
     for (;;)
     {
         if (HAL_UART_Receive(
@@ -328,7 +330,8 @@ static void App_RunTerminal(
                         &cmd
                     );
 
-                    if (!valid)
+                    if (!valid &&
+                        !Reglages_Traiter(uart, line, len))
                     {
                         App_UartSend(
                             uart,
