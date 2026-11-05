@@ -23,4 +23,16 @@ typedef enum { NAV_PREC, NAV_VALID, NAV_SUIV, SIESTE } TypeCmde_t;
 typedef struct { TypeCmde_t type; uint32_t valeur; } Cmde_t;
 extern osMessageQueueId_t CmdesHandle;
 
+/* Mesures de la chambre (Infos) : écrites par la tâche Capteurs,
+ * lues par Reveil (L), Ventilation et Interface (Tmes, IQA).
+ * Plusieurs tâches y accèdent : on passe par un mutex. Pour lire, appeler Infos_Lire(&copie). */
+typedef struct {
+  float    Tmes;   /* température mesurée en °C          (à venir) */
+  uint16_t IQA;    /* qualité de l'air                    (à venir) */
+  uint16_t L;      /* luminosité : 0 = noir, 100 = plein jour */
+} Infos_t;
+extern Infos_t Infos;
+extern osMutexId_t Infos_MutexHandle;
+void Infos_Lire(Infos_t *copie);
+
 #endif /* APP_MSG_H */
