@@ -8,6 +8,7 @@
 #include "oled.h"
 #include "ssd1306.h"
 #include "fonts.h"
+#include <stdio.h>
 
 /*
  * Initialisation de l'ecran SSD1306.
@@ -198,6 +199,284 @@ void OLED_ShowAlarm(
     /* Mise a jour de l'ecran */
     SSD1306_UpdateScreen();
 }
+
+
+/* ===== Y2 : affichage des differents ecrans ===== */
+
+static void OLED_Texte(uint8_t x, uint8_t y,
+                       const char *texte)
+{
+    SSD1306_GotoXY(x, y);
+    SSD1306_Puts((char *)texte,
+                 &Font_7x10,
+                 SSD1306_COLOR_WHITE);
+}
+
+static void OLED_GrandTexte(uint8_t x, uint8_t y,
+                            const char *texte)
+{
+    SSD1306_GotoXY(x, y);
+    SSD1306_Puts((char *)texte,
+                 &Font_11x18,
+                 SSD1306_COLOR_WHITE);
+}
+
+void OLED_SetContrast(uint8_t contraste)
+{
+    /* Commande SSD1306 : regler le contraste */
+    ssd1306_I2C_Write(SSD1306_I2C_ADDR, 0x00, 0x81);
+    ssd1306_I2C_Write(SSD1306_I2C_ADDR, 0x00, contraste);
+}
+
+
+
+void OLED_ShowPage(OLED_Page_t page,
+                   const OLED_Donnees_t *d)
+{
+    if (d == NULL || page >= OLED_PAGE_NOMBRE)
+        return;
+
+
+
+
+    static const char *titres[] = {
+        "HEURE",
+        "TEMPERATURE",
+        "QUALITE AIR",
+        "SOMMEIL",
+        "ALARME",
+        "SIESTE",
+        "CONSIGNE",
+        "SEUIL AIR",
+        "REGLAGES",
+        "VENTILATION"
+    };
+
+    char ligne[32];
+
+    SSD1306_Fill(SSD1306_COLOR_BLACK);
+
+    OLED_Texte(4, 2, titres[page]);
+
+    switch (page)
+    {
+        case OLED_PAGE_HEURE:
+            snprintf(ligne, sizeof(ligne),
+                     "%02u:%02u:%02u",
+                     d->reveil.h,
+                     d->reveil.m,
+                     d->reveil.s);
+            OLED_GrandTexte(17, 22, ligne);
+
+            OLED_Texte(0, 51,
+                       d->mode == MODE_NUIT ?
+                       "MODE : NUIT" : "MODE : JOUR");
+            break;
+
+        case OLED_PAGE_TEMPERATURE:
+        {
+            int temp = (int)(
+                d->infos.Tmes >= 0 ?
+                d->infos.Tmes + 0.5f :
+                d->infos.Tmes - 0.5f);
+
+            snprintf(ligne, sizeof(ligne),
+                     "%d C", temp);
+            OLED_GrandTexte(25, 22, ligne);
+
+            snprintf(ligne, sizeof(ligne),
+                     "CONSIGNE : %d C",
+                     (int)(d->config.Tcons + 0.5f));
+            OLED_Texte(0, 51, ligne);
+            break;
+        }
+
+        case OLED_PAGE_AIR:
+            if (d->infos.IQA == 0)
+            {
+                OLED_Texte(0, 25, "INITIALISATION");
+                OLED_Texte(0, 43, "CAPTEUR VOC");
+            }
+            else
+            {
+                snprintf(ligne, sizeof(ligne),
+                         "IQA %u", d->infos.IQA);
+                OLED_GrandTexte(13, 22, ligne);
+
+                OLED_Texte(
+                    0, 51,
+                    d->infos.IQA > d->config.seuil_IQA ?
+                    "AIR A AERER" : "AIR OK");
+            }
+            break;
+
+
+
+        case OLED_PAGE_SOMMEIL:
+
+            /* Score de la derniere nuit */
+            if (d->sommeil.Q_nuit == SCORE_AUCUN)
+            {
+                snprintf(ligne, sizeof(ligne), "--/100");
+            }
+            else
+            {
+                snprintf(ligne, sizeof(ligne),
+                         "%u/100",
+                         (unsigned)d->sommeil.Q_nuit);
+            }
+
+            /* Score principal au centre de la zone bleue */
+            OLED_GrandTexte(25, 30, ligne);
+
+            /* Etat en bas */
+            if (d->sommeil.etat == SOMMEIL_NOCTURNE)
+            {
+                OLED_Texte(4, 52, "NUIT EN COURS");
+            }
+            else
+            {
+                OLED_Texte(4, 52, "HORS SESSION");
+            }
+
+            break;
+
+
+
+        case OLED_PAGE_ALARME:
+            snprintf(ligne, sizeof(ligne),
+                     "%02u:%02u",
+                     d->reveil.alarme_h,
+                     d->reveil.alarme_m);
+            OLED_GrandTexte(36, 22, ligne);
+
+            if (d->reveil.etat == APP_ALARM_SONNERIE)
+                OLED_Texte(0, 51, "SONNERIE");
+            else if (d->reveil.etat == APP_ALARM_SNOOZE)
+                OLED_Texte(0, 51, "SNOOZE");
+            else if (d->reveil.alarme_active)
+                OLED_Texte(0, 51, "ALARME ACTIVE");
+            else
+                OLED_Texte(0, 51, "ALARME OFF");
+            break;
+
+
+
+        case OLED_PAGE_SIESTE:
+
+            if (d->sommeil.Q_sieste == SCORE_AUCUN)
+            {
+                snprintf(ligne, sizeof(ligne), "--/100");
+            }
+            else
+            {
+                snprintf(ligne, sizeof(ligne),
+                         "%u/100",
+                         (unsigned)d->sommeil.Q_sieste);
+            }
+
+            OLED_GrandTexte(25, 30, ligne);
+
+            if (d->sommeil.etat == SOMMEIL_SIESTE)
+            {
+                OLED_Texte(4, 52, "SIESTE EN COURS");
+            }
+            else if (d->message_sieste == 1)
+            {
+                OLED_Texte(4, 52, "SIESTE DEMANDEE");
+            }
+            else if (d->message_sieste == 2)
+            {
+                OLED_Texte(4, 52, "DEJA DEMANDEE");
+            }
+            else if (d->message_sieste == 3)
+            {
+                OLED_Texte(4, 52, "EN ATTENTE...");
+            }
+            else
+            {
+                OLED_Texte(4, 52, "APPUI LONG PAD 2");
+            }
+
+            break;
+
+
+
+        case OLED_PAGE_CONSIGNE:
+            snprintf(ligne, sizeof(ligne),
+                     "%d C",
+                     (int)(d->config.Tcons + 0.5f));
+            OLED_GrandTexte(25, 22, ligne);
+            OLED_Texte(0, 51, "REGLAGE VIA BT");
+            break;
+
+        case OLED_PAGE_SEUIL_AIR:
+            snprintf(ligne, sizeof(ligne),
+                     "IQA %u", d->config.seuil_IQA);
+            OLED_GrandTexte(13, 22, ligne);
+            OLED_Texte(0, 51, "REGLAGE VIA BT");
+            break;
+
+
+
+
+        case OLED_PAGE_REGLAGES:
+
+            /* Melodie sur une ligne qui s'affiche correctement */
+            snprintf(ligne, sizeof(ligne),
+                     "MELODIE : %u",
+                     (unsigned)d->config.id_melodie);
+
+            OLED_Texte(4, 41, ligne);
+
+            /* Regrouper les deux seuils sur une seule ligne */
+            snprintf(ligne, sizeof(ligne),
+                     "JOUR:%u  NUIT:%u",
+                     (unsigned)d->config.S_jour,
+                     (unsigned)d->config.S_nuit);
+
+            OLED_Texte(4, 53, ligne);
+
+            break;
+
+
+
+
+
+
+        case OLED_PAGE_VENTILATION:
+
+            /* Mettre le mode en valeur */
+            if (d->vent_manuel)
+            {
+                OLED_GrandTexte(31, 24, "MANUEL");
+            }
+            else
+            {
+                OLED_GrandTexte(42, 24, "AUTO");
+            }
+
+            /* Valeur secondaire du potentiometre */
+            snprintf(ligne, sizeof(ligne),
+                     "POT : %u %%",
+                     (unsigned)d->infos.Vpot);
+
+            OLED_Texte(4, 43, ligne);
+
+            /* Indication de commande */
+            OLED_Texte(4, 53, "PAD 2 : CHANGER");
+
+            break;
+
+
+
+        default:
+            break;
+    }
+
+    SSD1306_UpdateScreen();
+}
+
 
 
 

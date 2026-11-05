@@ -1730,30 +1730,144 @@ void StartDefaultTask(void *argument)
 */
 
 /* USER CODE END Header_StartDisplayTask */
+
 void StartDisplayTask(void *argument)
 {
   /* USER CODE BEGIN StartDisplayTask */
-	  DisplayMessage_t msg;
 
-	  /* Une seule tache initialise et utilise l'OLED (bus I2C partage : mutex) */
-	  osMutexAcquire(I2C1_MutexHandle, osWaitForever);
-	  OLED_Init();
-	  osMutexRelease(I2C1_MutexHandle);
+    (void)argument;
 
-	  for (;;)
-	  {
-	    /* Attendre les nouvelles donnees */
-	    if (osMessageQueueGet(displayQueueHandle, &msg, NULL, osWaitForever) == osOK)
-	    {
-	      osMutexAcquire(I2C1_MutexHandle, osWaitForever);
-	      OLED_ShowAlarm(msg.hours, msg.minutes, msg.seconds,
-	                     msg.alarmHours, msg.alarmMinutes,
-	                     msg.state, msg.enabled);
-	      osMutexRelease(I2C1_MutexHandle);
-	    }
-	  }
+    OLED_Page_t page = OLED_PAGE_HEURE;
+    Mode_t dernierMode = MODE_JOUR;
+
+    uint32_t dernierAffichage = 0;
+    uint32_t debutMessageSieste = 0;
+
+    uint8_t messageSieste = 0;
+    uint8_t forcerAffichage = 1;
+    uint8_t premierAffichage = 1;
+
+    /* L'interface est seule proprietaire de l'OLED */
+    osMutexAcquire(I2C1_MutexHandle, osWaitForever);
+    OLED_Init();
+    osMutexRelease(I2C1_MutexHandle);
+
+    for (;;)
+    {
+        Cmde_t cmd;
+
+        /* Attendre une touche, maximum 100 ms */
+        if (osMessageQueueGet(
+                CmdesHandle, &cmd, NULL, 100) == osOK)
+        {
+            /* Traiter toutes les commandes en attente */
+            do
+            {
+                switch (cmd.type)
+                {
+                    case NAV_PREC:
+                        page = (page == OLED_PAGE_HEURE)
+                            ? OLED_PAGE_NOMBRE - 1
+                            : page - 1;
+                        forcerAffichage = 1;
+                        break;
+
+                    case NAV_SUIV:
+                        page = (page + 1) % OLED_PAGE_NOMBRE;
+                        forcerAffichage = 1;
+                        break;
+
+                    case NAV_VALID:
+                        if (page == OLED_PAGE_VENTILATION)
+                        {
+                            Vent_Manuel = !Vent_Manuel;
+                            forcerAffichage = 1;
+                        }
+                        break;
+
+                    case SIESTE:
+                        if (osSemaphoreRelease(
+                                Evt_SiesteHandle) == osOK)
+                        {
+                            messageSieste = 1;
+                        }
+                        else
+                        {
+                            messageSieste = 2;
+                        }
+
+                        debutMessageSieste =
+                            osKernelGetTickCount();
+
+                        page = OLED_PAGE_SIESTE;
+                        forcerAffichage = 1;
+                        break;
+
+                    default:
+                        break;
+                }
+            }
+            while (osMessageQueueGet(
+                       CmdesHandle, &cmd, NULL, 0) == osOK);
+        }
+
+        uint32_t maintenant = osKernelGetTickCount();
+        Mode_t modeActuel = Mode_Lire();
+
+        /* Affichage immediat sur touche ou changement de mode.
+         * Sinon actualisation chaque seconde. */
+        if (forcerAffichage ||
+            premierAffichage ||
+            modeActuel != dernierMode ||
+            maintenant - dernierAffichage >= 1000)
+        {
+            OLED_Donnees_t d;
+
+            /* Copies protegees par leurs mutex internes */
+            EtatReveil_Lire(&d.reveil);
+            EtatSommeil_Lire(&d.sommeil);
+            Infos_Lire(&d.infos);
+            Config_Lire(&d.config);
+
+            d.mode = modeActuel;
+            d.vent_manuel = Vent_Manuel;
+
+            if (messageSieste != 0 &&
+                maintenant - debutMessageSieste < 3000)
+            {
+                d.message_sieste = messageSieste;
+            }
+            else
+            {
+                d.message_sieste = 0;
+                messageSieste = 0;
+            }
+
+            /* Le mutex couvre TOUT l'acces a l'OLED */
+            osMutexAcquire(I2C1_MutexHandle, osWaitForever);
+
+            /* Contraste attenue la nuit */
+            if (premierAffichage ||
+                modeActuel != dernierMode)
+            {
+                OLED_SetContrast(
+                    modeActuel == MODE_NUIT ? 0x10 : 0xFF);
+            }
+
+            OLED_ShowPage(page, &d);
+
+            osMutexRelease(I2C1_MutexHandle);
+
+            dernierMode = modeActuel;
+            dernierAffichage = maintenant;
+            forcerAffichage = 0;
+            premierAffichage = 0;
+        }
+    }
+
   /* USER CODE END StartDisplayTask */
 }
+
 
 /* USER CODE BEGIN Header_StartCommandTask */
 /**
