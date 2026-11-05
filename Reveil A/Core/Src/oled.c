@@ -134,7 +134,7 @@ void OLED_ShowAlarm(
     SSD1306_Fill(SSD1306_COLOR_BLACK);
 
     /* Ligne 1 : titre */
-    SSD1306_GotoXY(43, 0);
+    SSD1306_GotoXY(43, 8);
     SSD1306_Puts(
         "REVEIL",
         &Font_7x10,
@@ -142,7 +142,7 @@ void OLED_ShowAlarm(
     );
 
     /* Ligne 2 : heure actuelle */
-    SSD1306_GotoXY(20, 14);
+    SSD1306_GotoXY(20, 19);
     SSD1306_Puts(
         timeText,
         &Font_11x18,
@@ -150,7 +150,7 @@ void OLED_ShowAlarm(
     );
 
     /* Ligne 3 : heure de l'alarme */
-    SSD1306_GotoXY(22, 36);
+    SSD1306_GotoXY(22, 39);
     SSD1306_Puts(
         alarmText,
         &Font_7x10,

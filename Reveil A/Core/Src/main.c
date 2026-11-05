@@ -26,6 +26,8 @@
 #include "oled.h"
 #include "app_clock.h"
 #include "app_alarm.h"
+#include "app_alarm_storage.h"
+#include <string.h>
 
 /* USER CODE END Includes */
 
@@ -90,9 +92,10 @@ typedef struct
 /* Private variables ---------------------------------------------------------*/
 I2C_HandleTypeDef hi2c1;
 
-RTC_HandleTypeDef hrtc;
-
+UART_HandleTypeDef hlpuart1;
 UART_HandleTypeDef huart2;
+
+RTC_HandleTypeDef hrtc;
 
 /* Definitions for defaultTask */
 osThreadId_t defaultTaskHandle;
@@ -115,9 +118,14 @@ const osThreadAttr_t commandTask_attributes = {
   .stack_size = 512 * 4,
   .priority = (osPriority_t) osPriorityLow,
 };
+/* Definitions for bluetoothTask */
+osThreadId_t bluetoothTaskHandle;
+const osThreadAttr_t bluetoothTask_attributes = {
+  .name = "bluetoothTask",
+  .stack_size = 256 * 4,
+  .priority = (osPriority_t) osPriorityLow,
+};
 /* USER CODE BEGIN PV */
-volatile uint8_t oled_detected = 0;
-volatile uint8_t oled_address = 0;
 static osMessageQueueId_t displayQueueHandle;
 static osMessageQueueId_t commandQueueHandle;
 /* USER CODE END PV */
@@ -128,9 +136,11 @@ static void MX_GPIO_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_I2C1_Init(void);
 static void MX_RTC_Init(void);
+static void MX_LPUART1_UART_Init(void);
 void StartDefaultTask(void *argument);
 void StartDisplayTask(void *argument);
 void StartCommandTask(void *argument);
+void StartBluetoothTask(void *argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -156,6 +166,252 @@ static uint8_t App_Parse2Digits(
 
     return 1;
 }
+
+
+static void App_UartSend(
+    UART_HandleTypeDef *uart,
+    const char *text)
+{
+    HAL_UART_Transmit(
+        uart,
+        (uint8_t *)text,
+        (uint16_t)strlen(text),
+        100
+    );
+}
+
+
+static uint8_t App_ParseCommand(
+    const char *line,
+    uint8_t len,
+    AppCommand_t *cmd)
+{
+    uint8_t h = 0;
+    uint8_t m = 0;
+    uint8_t s = 0;
+
+    /* T HH MM SS */
+    if (len == 10 &&
+        (line[0] == 'T' || line[0] == 't') &&
+        line[1] == ' ' &&
+        line[4] == ' ' &&
+        line[7] == ' ' &&
+        App_Parse2Digits(&line[2], &h) &&
+        App_Parse2Digits(&line[5], &m) &&
+        App_Parse2Digits(&line[8], &s) &&
+        h < 24 && m < 60 && s < 60)
+    {
+        cmd->type = APP_CMD_SET_TIME;
+        cmd->hours = h;
+        cmd->minutes = m;
+        cmd->seconds = s;
+
+        return 1;
+    }
+
+    /* A HH MM */
+    if (len == 7 &&
+        (line[0] == 'A' || line[0] == 'a') &&
+        line[1] == ' ' &&
+        line[4] == ' ' &&
+        App_Parse2Digits(&line[2], &h) &&
+        App_Parse2Digits(&line[5], &m) &&
+        h < 24 && m < 60)
+    {
+        cmd->type = APP_CMD_SET_ALARM;
+        cmd->hours = h;
+        cmd->minutes = m;
+
+        return 1;
+    }
+
+    /* E 0 ou E 1 */
+    if (len == 3 &&
+        (line[0] == 'E' || line[0] == 'e') &&
+        line[1] == ' ' &&
+        (line[2] == '0' || line[2] == '1'))
+    {
+        cmd->type = APP_CMD_SET_ENABLED;
+        cmd->enabled = line[2] - '0';
+
+        return 1;
+    }
+
+    return 0;
+}
+
+
+static void App_RunTerminal(
+    UART_HandleTypeDef *uart,
+    uint8_t isBluetooth)
+{
+    uint8_t rx;
+
+    char line[16];
+    uint8_t len = 0;
+    uint8_t discardLine = 0;
+
+    if (isBluetooth)
+    {
+        App_UartSend(
+            uart,
+            "\r\nBLUETOOTH REVEIL PRET\r\n"
+        );
+    }
+    else
+    {
+        App_UartSend(
+            uart,
+            "\r\nREVEIL INTELLIGENT\r\n"
+        );
+    }
+
+    App_UartSend(
+        uart,
+        "T HH MM SS = HEURE\r\n"
+        "A HH MM = ALARME\r\n"
+        "E 1 / E 0 = ON / OFF\r\n"
+        "r = REARM\r\n"
+        "s = SNOOZE\r\n"
+        "x = STOP\r\n"
+        "p = TEST\r\n"
+    );
+
+    for (;;)
+    {
+        if (HAL_UART_Receive(
+                uart,
+                &rx,
+                1,
+                10) == HAL_OK)
+        {
+            AppCommand_t cmd = {0};
+            uint8_t valid = 0;
+
+            /* Fin de ligne */
+            if (rx == '\r' || rx == '\n')
+            {
+                if (!discardLine && len > 0)
+                {
+                    valid = App_ParseCommand(
+                        line,
+                        len,
+                        &cmd
+                    );
+
+                    if (!valid)
+                    {
+                        App_UartSend(
+                            uart,
+                            "ERREUR: commande invalide\r\n"
+                        );
+                    }
+                }
+
+                len = 0;
+                discardLine = 0;
+            }
+
+            /* Retour arriere */
+            else if (!discardLine &&
+                     (rx == '\b' || rx == 127))
+            {
+                if (len > 0)
+                {
+                    len--;
+                }
+            }
+
+            /* Commande TEST immediate */
+            else if (!discardLine &&
+                     len == 0 &&
+                     (rx == 'p' || rx == 'P'))
+            {
+                if (isBluetooth)
+                {
+                    App_UartSend(uart, "BT OK\r\n");
+                }
+                else
+                {
+                    App_UartSend(uart, "UART OK\r\n");
+                }
+            }
+
+            /* Commandes simples immediates */
+            else if (!discardLine &&
+                     len == 0 &&
+                     (rx == 'r' || rx == 'R' ||
+                      rx == 's' || rx == 'S' ||
+                      rx == 'x' || rx == 'X'))
+            {
+                if (rx == 'r' || rx == 'R')
+                {
+                    cmd.type = APP_CMD_REARM;
+                }
+                else if (rx == 's' || rx == 'S')
+                {
+                    cmd.type = APP_CMD_SNOOZE;
+                }
+                else
+                {
+                    cmd.type = APP_CMD_STOP;
+                }
+
+                valid = 1;
+            }
+
+            /* Reception d'une commande longue */
+            else if (!discardLine &&
+                     rx >= 32 && rx <= 126)
+            {
+                if (len < sizeof(line))
+                {
+                    line[len++] = (char)rx;
+                }
+                else
+                {
+                    len = 0;
+                    discardLine = 1;
+
+                    App_UartSend(
+                        uart,
+                        "ERREUR: ligne trop longue\r\n"
+                    );
+                }
+            }
+
+            /* Envoi vers defaultTask */
+            if (valid)
+            {
+                if (osMessageQueuePut(
+                        commandQueueHandle,
+                        &cmd,
+                        0,
+                        0) == osOK)
+                {
+                    App_UartSend(
+                        uart,
+                        "Commande recue\r\n"
+                    );
+                }
+                else
+                {
+                    App_UartSend(
+                        uart,
+                        "ERREUR: queue pleine\r\n"
+                    );
+                }
+            }
+        }
+        else
+        {
+            /* Ne pas ralentir une ligne en cours */
+            osDelay(1);
+        }
+    }
+}
+
+
 
 /* USER CODE END 0 */
 
@@ -191,6 +447,7 @@ int main(void)
   MX_USART2_UART_Init();
   MX_I2C1_Init();
   MX_RTC_Init();
+  MX_LPUART1_UART_Init();
   /* USER CODE BEGIN 2 */
 
   /* USER CODE END 2 */
@@ -249,13 +506,20 @@ int main(void)
   /* creation of commandTask */
   commandTaskHandle = osThreadNew(StartCommandTask, NULL, &commandTask_attributes);
 
+  /* creation of bluetoothTask */
+  bluetoothTaskHandle = osThreadNew(StartBluetoothTask, NULL, &bluetoothTask_attributes);
+
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
+
   if (defaultTaskHandle == NULL ||
-      displayTaskHandle == NULL)
+      displayTaskHandle == NULL ||
+      commandTaskHandle == NULL ||
+      bluetoothTaskHandle == NULL)
   {
       Error_Handler();
   }
+
   /* USER CODE END RTOS_THREADS */
 
   /* USER CODE BEGIN RTOS_EVENTS */
@@ -382,38 +646,36 @@ static void MX_I2C1_Init(void)
 }
 
 /**
-  * @brief RTC Initialization Function
+  * @brief LPUART1 Initialization Function
   * @param None
   * @retval None
   */
-static void MX_RTC_Init(void)
+static void MX_LPUART1_UART_Init(void)
 {
 
-  /* USER CODE BEGIN RTC_Init 0 */
+  /* USER CODE BEGIN LPUART1_Init 0 */
 
-  /* USER CODE END RTC_Init 0 */
+  /* USER CODE END LPUART1_Init 0 */
 
-  /* USER CODE BEGIN RTC_Init 1 */
+  /* USER CODE BEGIN LPUART1_Init 1 */
 
-  /* USER CODE END RTC_Init 1 */
-
-  /** Initialize RTC Only
-  */
-  hrtc.Instance = RTC;
-  hrtc.Init.HourFormat = RTC_HOURFORMAT_24;
-  hrtc.Init.AsynchPrediv = 127;
-  hrtc.Init.SynchPrediv = 255;
-  hrtc.Init.OutPut = RTC_OUTPUT_DISABLE;
-  hrtc.Init.OutPutRemap = RTC_OUTPUT_REMAP_NONE;
-  hrtc.Init.OutPutPolarity = RTC_OUTPUT_POLARITY_HIGH;
-  hrtc.Init.OutPutType = RTC_OUTPUT_TYPE_OPENDRAIN;
-  if (HAL_RTC_Init(&hrtc) != HAL_OK)
+  /* USER CODE END LPUART1_Init 1 */
+  hlpuart1.Instance = LPUART1;
+  hlpuart1.Init.BaudRate = 9600;
+  hlpuart1.Init.WordLength = UART_WORDLENGTH_8B;
+  hlpuart1.Init.StopBits = UART_STOPBITS_1;
+  hlpuart1.Init.Parity = UART_PARITY_NONE;
+  hlpuart1.Init.Mode = UART_MODE_TX_RX;
+  hlpuart1.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  hlpuart1.Init.OneBitSampling = UART_ONE_BIT_SAMPLE_DISABLE;
+  hlpuart1.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_NO_INIT;
+  if (HAL_UART_Init(&hlpuart1) != HAL_OK)
   {
     Error_Handler();
   }
-  /* USER CODE BEGIN RTC_Init 2 */
+  /* USER CODE BEGIN LPUART1_Init 2 */
 
-  /* USER CODE END RTC_Init 2 */
+  /* USER CODE END LPUART1_Init 2 */
 
 }
 
@@ -449,6 +711,42 @@ static void MX_USART2_UART_Init(void)
   /* USER CODE BEGIN USART2_Init 2 */
 
   /* USER CODE END USART2_Init 2 */
+
+}
+
+/**
+  * @brief RTC Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_RTC_Init(void)
+{
+
+  /* USER CODE BEGIN RTC_Init 0 */
+
+  /* USER CODE END RTC_Init 0 */
+
+  /* USER CODE BEGIN RTC_Init 1 */
+
+  /* USER CODE END RTC_Init 1 */
+
+  /** Initialize RTC Only
+  */
+  hrtc.Instance = RTC;
+  hrtc.Init.HourFormat = RTC_HOURFORMAT_24;
+  hrtc.Init.AsynchPrediv = 127;
+  hrtc.Init.SynchPrediv = 255;
+  hrtc.Init.OutPut = RTC_OUTPUT_DISABLE;
+  hrtc.Init.OutPutRemap = RTC_OUTPUT_REMAP_NONE;
+  hrtc.Init.OutPutPolarity = RTC_OUTPUT_POLARITY_HIGH;
+  hrtc.Init.OutPutType = RTC_OUTPUT_TYPE_OPENDRAIN;
+  if (HAL_RTC_Init(&hrtc) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN RTC_Init 2 */
+
+  /* USER CODE END RTC_Init 2 */
 
 }
 
@@ -502,10 +800,9 @@ static void MX_GPIO_Init(void)
   * @retval None
   */
 /* USER CODE END Header_StartDefaultTask */
-
 void StartDefaultTask(void *argument)
 {
-    /* USER CODE BEGIN 5 */
+  /* USER CODE BEGIN 5 */
 
     AppClock_Time_t currentTime;
     AppAlarm_t alarm;
@@ -529,23 +826,49 @@ void StartDefaultTask(void *argument)
         Error_Handler();
     }
 
-    /* Premiere alarme : minute suivante */
-    uint8_t alarmHour = currentTime.hours;
-    uint8_t alarmMinute = currentTime.minutes + 1;
 
-    if (alarmMinute >= 60)
+    /* Charger la configuration sauvegardee */
+    if (!AppAlarmStorage_Load(
+            &hrtc,
+            &alarm,
+            10))
     {
-        alarmMinute = 0;
-        alarmHour = (alarmHour + 1) % 24;
+        /*
+         * Premier demarrage :
+         * alarme a 07:00, desactivee.
+         */
+        AppAlarm_Init(
+            &alarm,
+            7,
+            0,
+            10
+        );
+
+        AppAlarm_Stop(&alarm);
+
+        /* Sauvegarder les valeurs initiales */
+        if (AppAlarmStorage_Save(
+                &hrtc, &alarm) != HAL_OK)
+        {
+            Error_Handler();
+        }
     }
 
-    /* SNOOZE de 10 secondes pour les tests */
-    AppAlarm_Init(
-        &alarm,
-        alarmHour,
-        alarmMinute,
-        10
-    );
+    /* Variables conservees pour la commande REARM */
+    uint8_t alarmHour = alarm.hours;
+    uint8_t alarmMinute = alarm.minutes;
+
+    /*
+     * Eviter une sonnerie immediate apres RESET
+     * si on se trouve deja dans la minute
+     * programmee.
+     */
+    if (currentTime.hours == alarm.hours &&
+        currentTime.minutes == alarm.minutes)
+    {
+        alarm.minuteArmed = 0;
+    }
+
 
     for (;;)
     {
@@ -586,6 +909,13 @@ void StartDefaultTask(void *argument)
                     case APP_CMD_STOP:
 
                         AppAlarm_Stop(&alarm);
+
+                        if (AppAlarmStorage_Save(
+                                    &hrtc, &alarm) != HAL_OK)
+                            {
+                                Error_Handler();
+                            }
+
                         break;
 
                     case APP_CMD_REARM:
@@ -608,6 +938,13 @@ void StartDefaultTask(void *argument)
                             alarmMinute,
                             10
                         );
+                        if (AppAlarmStorage_Save(
+                                    &hrtc, &alarm) != HAL_OK)
+                            {
+                                Error_Handler();
+                            }
+
+
 
                         break;
 
@@ -656,6 +993,13 @@ void StartDefaultTask(void *argument)
                         {
                             AppAlarm_Stop(&alarm);
                         }
+                        if (AppAlarmStorage_Save(
+                                    &hrtc, &alarm) != HAL_OK)
+                            {
+                                Error_Handler();
+                            }
+
+
 
                         break;
                     }
@@ -685,6 +1029,13 @@ void StartDefaultTask(void *argument)
                                 alarm.minuteArmed = 0;
                             }
                         }
+                        if (AppAlarmStorage_Save(
+                                    &hrtc, &alarm) != HAL_OK)
+                            {
+                                Error_Handler();
+                            }
+
+
 
                         break;
                     }
@@ -750,9 +1101,8 @@ void StartDefaultTask(void *argument)
         osDelay(100);
     }
 
-    /* USER CODE END 5 */
+  /* USER CODE END 5 */
 }
-
 
 /* USER CODE BEGIN Header_StartDisplayTask */
 /**
@@ -802,203 +1152,34 @@ void StartDisplayTask(void *argument)
 /* USER CODE END Header_StartCommandTask */
 void StartCommandTask(void *argument)
 {
-  /* USER CODE BEGIN StartCommandTask */
-  /* Infinite loop */
+    /* USER CODE BEGIN StartCommandTask */
 
+    (void)argument;
 
-	uint8_t rx;
+    App_RunTerminal(&huart2, 0);
 
-	char line[16];
-	uint8_t len = 0;
-
-	const char welcome[] =
-	    "\r\nREVEIL INTELLIGENT\r\n"
-	    "T HH MM SS = regler heure\r\n"
-	    "s = SNOOZE\r\n"
-	    "x = STOP\r\n"
-	    "r = REARM\r\n"
-			"A HH MM = regler alarme\r\n"
-			"E 0 / E 1 = OFF / ON\r\n"
-			;
-
-	HAL_UART_Transmit(
-	    &huart2,
-	    (uint8_t *)welcome,
-	    sizeof(welcome) - 1,
-	    100
-	);
-
-	for (;;)
-	{
-	    if (HAL_UART_Receive(
-	            &huart2,
-	            &rx,
-	            1,
-	            1) == HAL_OK)
-	    {
-	        AppCommand_t cmd = {0};
-	        uint8_t send = 0;
-
-	        /* Commandes simples immediates */
-	        if (len == 0 &&
-	            (rx == 's' || rx == 'S' ||
-	             rx == 'x' || rx == 'X' ||
-	             rx == 'r' || rx == 'R'))
-	        {
-	            if (rx == 's' || rx == 'S')
-	                cmd.type = APP_CMD_SNOOZE;
-
-	            else if (rx == 'x' || rx == 'X')
-	                cmd.type = APP_CMD_STOP;
-
-	            else
-	                cmd.type = APP_CMD_REARM;
-
-	            send = 1;
-	        }
-
-
-	        /* Fin d'une commande complete */
-	        else if (rx == '\r' || rx == '\n')
-	        {
-	            if (len > 0)
-	            {
-	                uint8_t h = 0;
-	                uint8_t m = 0;
-	                uint8_t s = 0;
-
-	                /* T HH MM SS : regler le RTC */
-	                if (len == 10 &&
-	                    (line[0] == 'T' || line[0] == 't') &&
-	                    line[1] == ' ' &&
-	                    line[4] == ' ' &&
-	                    line[7] == ' ' &&
-	                    App_Parse2Digits(&line[2], &h) &&
-	                    App_Parse2Digits(&line[5], &m) &&
-	                    App_Parse2Digits(&line[8], &s) &&
-	                    h < 24 && m < 60 && s < 60)
-	                {
-	                    cmd.type = APP_CMD_SET_TIME;
-	                    cmd.hours = h;
-	                    cmd.minutes = m;
-	                    cmd.seconds = s;
-	                    send = 1;
-	                }
-
-	                /* A HH MM : programmer l'alarme */
-	                else if (len == 7 &&
-	                    (line[0] == 'A' || line[0] == 'a') &&
-	                    line[1] == ' ' &&
-	                    line[4] == ' ' &&
-	                    App_Parse2Digits(&line[2], &h) &&
-	                    App_Parse2Digits(&line[5], &m) &&
-	                    h < 24 && m < 60)
-	                {
-	                    cmd.type = APP_CMD_SET_ALARM;
-	                    cmd.hours = h;
-	                    cmd.minutes = m;
-	                    send = 1;
-	                }
-
-	                /* E 0 ou E 1 : activer / desactiver */
-	                else if (len == 3 &&
-	                    (line[0] == 'E' || line[0] == 'e') &&
-	                    line[1] == ' ' &&
-	                    (line[2] == '0' || line[2] == '1'))
-	                {
-	                    cmd.type = APP_CMD_SET_ENABLED;
-	                    cmd.enabled = line[2] - '0';
-	                    send = 1;
-	                }
-
-	                else
-	                {
-	                    const char error[] =
-	                        "ERREUR: commande invalide\r\n";
-
-	                    HAL_UART_Transmit(
-	                        &huart2,
-	                        (uint8_t *)error,
-	                        sizeof(error) - 1,
-	                        100
-	                    );
-	                }
-
-	                len = 0;
-	            }
-	        }
-
-
-	        /* Retour arriere */
-	        else if (rx == '\b' || rx == 127)
-	        {
-	            if (len > 0)
-	                len--;
-	        }
-
-	        /* Accumulation de la ligne */
-	        else if (rx >= 32 && rx <= 126)
-	        {
-	            if (len < sizeof(line) - 1)
-	            {
-	                line[len++] = (char)rx;
-	            }
-	            else
-	            {
-	                len = 0;
-
-	                const char error[] =
-	                    "ERREUR: ligne trop longue\r\n";
-
-	                HAL_UART_Transmit(
-	                    &huart2,
-	                    (uint8_t *)error,
-	                    sizeof(error) - 1,
-	                    100
-	                );
-	            }
-	        }
-
-	        /* Envoyer la commande */
-	        if (send)
-	        {
-	            if (osMessageQueuePut(
-	                    commandQueueHandle,
-	                    &cmd,
-	                    0,
-	                    0) == osOK)
-	            {
-	                const char ack[] =
-	                    "Commande envoyee\r\n";
-
-	                HAL_UART_Transmit(
-	                    &huart2,
-	                    (uint8_t *)ack,
-	                    sizeof(ack) - 1,
-	                    100
-	                );
-	            }
-	            else
-	            {
-	                const char error[] =
-	                    "ERREUR: queue pleine\r\n";
-
-	                HAL_UART_Transmit(
-	                    &huart2,
-	                    (uint8_t *)error,
-	                    sizeof(error) - 1,
-	                    100
-	                );
-	            }
-	        }
-	    }
-
-	    osDelay(10);
-	}
-
-
-  /* USER CODE END StartCommandTask */
+    /* USER CODE END StartCommandTask */
 }
+
+/* USER CODE BEGIN Header_StartBluetoothTask */
+/**
+* @brief Function implementing the bluetoothTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartBluetoothTask */
+
+void StartBluetoothTask(void *argument)
+{
+    /* USER CODE BEGIN StartBluetoothTask */
+
+    (void)argument;
+
+    App_RunTerminal(&hlpuart1, 1);
+
+    /* USER CODE END StartBluetoothTask */
+}
+
 
 /**
   * @brief  Period elapsed callback in non blocking mode

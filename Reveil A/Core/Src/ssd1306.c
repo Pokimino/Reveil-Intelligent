@@ -179,8 +179,11 @@ uint8_t SSD1306_Init(void) {
 	
 	/* Init LCD */
 	SSD1306_WRITECOMMAND(0xAE); //display off
-	SSD1306_WRITECOMMAND(0x20); //Set Memory Addressing Mode   
-	SSD1306_WRITECOMMAND(0x10); //00,Horizontal Addressing Mode;01,Vertical Addressing Mode;10,Page Addressing Mode (RESET);11,Invalid
+	/* Selection du mode d'adressage */
+	SSD1306_WRITECOMMAND(0x20);
+
+	/* Mode PAGE, compatible avec UpdateScreen */
+	SSD1306_WRITECOMMAND(0x02);
 	SSD1306_WRITECOMMAND(0xB0); //Set Page Start Address for Page Addressing Mode,0-7
 	SSD1306_WRITECOMMAND(0xC8); //Set COM Output Scan Direction
 	SSD1306_WRITECOMMAND(0x00); //---set low column address
