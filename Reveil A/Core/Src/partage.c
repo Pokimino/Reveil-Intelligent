@@ -10,7 +10,7 @@ osSemaphoreId_t    Evt_SiesteHandle;
 /* ---------- Valeurs par défaut (réglées pour la démo : durées courtes) ---------- */
 static Config_t config = {
   .id_melodie       = 0,
-  .Tcons            = 24.0f,
+  .Tcons            = 25.0f,
   .seuil_IQA        = 150,
   .D_aube_ms        = 20000,
   .D_palier_ms      = 10000,
