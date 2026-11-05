@@ -1519,6 +1519,65 @@ void StartDefaultTask(void *argument)
                 }
             }
 
+            /* ===== Y1.2 : Reception des gestes ===== */
+            Geste_t geste;
+
+            while (osMessageQueueGet(
+                       Evt_GestesHandle,
+                       &geste,
+                       NULL,
+                       0) == osOK)
+            {
+                switch (geste)
+                {
+                    case GESTE_SNOOZE:
+                        /* Snooze seulement pendant SONNERIE */
+                        AppAlarm_Snooze(
+                            &alarm,
+                            currentTime.hours,
+                            currentTime.minutes,
+                            currentTime.seconds
+                        );
+                        break;
+
+                    case GESTE_STOP:
+                        /* STOP autorise en SONNERIE et SNOOZE */
+                        if (alarm.state == APP_ALARM_SONNERIE ||
+                            alarm.state == APP_ALARM_SNOOZE)
+                        {
+                            AppAlarm_Stop(&alarm);
+
+                            /* Sauvegarder l'alarme desactivee */
+                            if (AppAlarmStorage_Save(
+                                    &hrtc,
+                                    &alarm) != HAL_OK)
+                            {
+                                Error_Handler();
+                            }
+                        }
+                        break;
+
+                    default:
+                        break;
+                }
+            }
+
+
+
+            /* Partager l'etat du reveil avec les autres taches */
+            EtatReveil_t etatPartage = {
+                .h = currentTime.hours,
+                .m = currentTime.minutes,
+                .s = currentTime.seconds,
+                .alarme_h = alarm.hours,
+                .alarme_m = alarm.minutes,
+                .alarme_active = alarm.enabled,
+                .etat = alarm.state
+            };
+
+            EtatReveil_Ecrire(&etatPartage);
+
+
             /* Envoyer l'etat a la tache OLED */
 
             if (currentTime.seconds != lastSecond ||
